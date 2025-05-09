@@ -413,8 +413,14 @@ function cleanupFiles($dir) {
             border: 1px solid #ddd;
             border-radius: 4px;
             background-color: #f9f9f9;
-            max-height: 150px;
+            max-height: 250px;
             overflow-y: auto;
+        }
+        .dragging {
+            opacity: 0.5;
+        }
+        .drag-over {
+            border-top: 2px solid #3498db;
         }
         .file-list:empty {
             display: none;
@@ -423,10 +429,45 @@ function cleanupFiles($dir) {
             padding: 5px;
             margin-bottom: 5px;
             border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            cursor: move;
         }
         .file-item:last-child {
             border-bottom: none;
             margin-bottom: 0;
+        }
+        .file-item .handle {
+            margin-right: 10px;
+            color: #999;
+            cursor: move;
+        }
+        .file-item .remove {
+            margin-left: auto;
+            color: #e74c3c;
+            cursor: pointer;
+            font-weight: bold;
+            padding: 0 5px;
+        }
+        .file-item .remove:hover {
+            color: #c0392b;
+        }
+        .add-button, .submit-button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 10px 0;
+            transition: background-color 0.3s;
+        }
+        .add-button:hover, .submit-button:hover {
+            background-color: #2980b9;
+        }
+        input[name="pdfFileAdd"] {
+            display: none;
         }
         .file-name {
             font-weight: bold;
@@ -449,13 +490,16 @@ function cleanupFiles($dir) {
         
         <!-- PDF結合タブ -->
         <div id="merge" class="tabcontent" style="display: block;">
-            <form action="" method="post" enctype="multipart/form-data">
-                <label for="pdfFiles">PDFファイルを選択（複数可）:</label>
-                <input type="file" name="pdfFiles[]" id="pdfFiles" multiple accept=".pdf" required onchange="displayFileNames('pdfFiles', 'fileList')">
-                <div id="fileList" class="file-list"></div>
-                <p class="note">※ 結合したいPDFファイルを複数選択してください。結合順序はファイル名のアルファベット順になります。</p>
+            <form action="" method="post" enctype="multipart/form-data" id="mergeForm">
+                <label for="pdfFileAdd">PDFファイルを選択（複数可）:</label>
+                <input type="file" name="pdfFileAdd" id="pdfFileAdd" accept=".pdf" onchange="addFiles(this.files)">
+                <button type="button" class="add-button" onclick="document.getElementById('pdfFileAdd').click()">ファイルを追加</button>
                 
-                <button type="submit" name="merge">PDFを結合</button>
+                <div id="fileList" class="file-list sortable"></div>
+                <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。</p>
+                
+                <button type="button" onclick="submitMergeForm()" class="submit-button">PDFを結合</button>
+                <div id="fileInputsContainer" style="display: none;"></div>
             </form>
         </div>
         
@@ -498,7 +542,7 @@ function cleanupFiles($dir) {
             evt.currentTarget.className += " active";
         }
         
-        // ファイル選択時にファイル名を表示する関数
+        // 単一ファイル選択時にファイル名を表示する関数
         function displayFileNames(inputId, listId) {
             const input = document.getElementById(inputId);
             const fileList = document.getElementById(listId);
@@ -524,6 +568,164 @@ function cleanupFiles($dir) {
                     fileList.appendChild(fileItem);
                 }
             }
+        }
+        
+        // 結合用のファイル管理用配列
+        let mergeFiles = [];
+        
+        // ファイルを追加する関数
+        function addFiles(files) {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                // PDFファイルかチェック
+                if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                    mergeFiles.push(file);
+                }
+            }
+            updateFileList();
+        }
+        
+        // ファイルリストを更新する関数
+        function updateFileList() {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+            
+            if (mergeFiles.length > 0) {
+                for (let i = 0; i < mergeFiles.length; i++) {
+                    const file = mergeFiles[i];
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+                    fileItem.dataset.index = i;
+                    
+                    // ドラッグハンドル
+                    const handle = document.createElement('span');
+                    handle.className = 'handle';
+                    handle.innerHTML = '&#8597;';
+                    fileItem.appendChild(handle);
+                    
+                    // ファイル名とサイズを表示
+                    const fileName = document.createElement('span');
+                    fileName.className = 'file-name';
+                    fileName.textContent = file.name;
+                    
+                    const fileSize = document.createElement('span');
+                    fileSize.className = 'file-size';
+                    fileSize.textContent = formatFileSize(file.size);
+                    
+                    // 削除ボタン
+                    const removeBtn = document.createElement('span');
+                    removeBtn.className = 'remove';
+                    removeBtn.textContent = '\u00D7'; // × is the multiplication sign (×)
+                    removeBtn.onclick = function() {
+                        removeFile(i);
+                    };
+                    
+                    fileItem.appendChild(fileName);
+                    fileItem.appendChild(fileSize);
+                    fileItem.appendChild(removeBtn);
+                    fileList.appendChild(fileItem);
+                }
+                
+                // ソータブルを初期化
+                initSortable();
+            }
+        }
+        
+        // ファイルを削除する関数
+        function removeFile(index) {
+            mergeFiles.splice(index, 1);
+            updateFileList();
+        }
+        
+        // ソータブルを初期化する関数
+        function initSortable() {
+            const fileList = document.getElementById('fileList');
+            let draggedItem = null;
+            
+            // ドラッグイベントを設定
+            const items = fileList.querySelectorAll('.file-item');
+            items.forEach(item => {
+                item.draggable = true;
+                
+                item.addEventListener('dragstart', function() {
+                    draggedItem = this;
+                    setTimeout(() => this.classList.add('dragging'), 0);
+                });
+                
+                item.addEventListener('dragend', function() {
+                    draggedItem = null;
+                    this.classList.remove('dragging');
+                });
+                
+                item.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                });
+                
+                item.addEventListener('dragenter', function(e) {
+                    e.preventDefault();
+                    if (this !== draggedItem) {
+                        this.classList.add('drag-over');
+                    }
+                });
+                
+                item.addEventListener('dragleave', function() {
+                    this.classList.remove('drag-over');
+                });
+                
+                item.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    if (this !== draggedItem) {
+                        const draggedIndex = parseInt(draggedItem.dataset.index);
+                        const targetIndex = parseInt(this.dataset.index);
+                        
+                        // ファイル配列の順序を入れ替え
+                        const temp = mergeFiles[draggedIndex];
+                        mergeFiles[draggedIndex] = mergeFiles[targetIndex];
+                        mergeFiles[targetIndex] = temp;
+                        
+                        // リストを更新
+                        updateFileList();
+                    }
+                    this.classList.remove('drag-over');
+                });
+            });
+        }
+        
+        // フォーム送信時にファイルを追加する
+        function submitMergeForm() {
+            if (mergeFiles.length === 0) {
+                alert('PDFファイルを少なくとも1つ選択してください。');
+                return;
+            }
+            
+            const form = document.getElementById('mergeForm');
+            const container = document.getElementById('fileInputsContainer');
+            container.innerHTML = '';
+            
+            // ファイルをFormDataに追加
+            for (let i = 0; i < mergeFiles.length; i++) {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.name = 'pdfFiles[]';
+                input.style.display = 'none';
+                
+                // FileListオブジェクトを作成
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(mergeFiles[i]);
+                input.files = dataTransfer.files;
+                
+                container.appendChild(input);
+            }
+            
+            // 結合ボタンを追加
+            const mergeButton = document.createElement('input');
+            mergeButton.type = 'hidden';
+            mergeButton.name = 'merge';
+            mergeButton.value = '1';
+            container.appendChild(mergeButton);
+            
+            // フォームを送信
+            form.submit();
         }
         
         // ファイルサイズを読みやすい形式に変換する関数

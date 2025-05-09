@@ -407,12 +407,27 @@ function cleanupFiles($dir) {
             color: #666;
             margin-top: 5px;
         }
-        .file-list {
+        .drop-zone {
             margin: 10px 0;
-            padding: 10px;
-            border: 1px solid #ddd;
+            border: 2px dashed #3498db;
             border-radius: 4px;
             background-color: #f9f9f9;
+            position: relative;
+            min-height: 100px;
+            transition: all 0.3s;
+        }
+        .drop-zone.drag-over {
+            background-color: #e8f4fc;
+            border-color: #2980b9;
+        }
+        .drop-zone-text {
+            text-align: center;
+            padding: 20px;
+            color: #7f8c8d;
+            font-size: 16px;
+        }
+        .file-list {
+            padding: 10px;
             max-height: 250px;
             overflow-y: auto;
         }
@@ -495,7 +510,10 @@ function cleanupFiles($dir) {
                 <input type="file" name="pdfFileAdd" id="pdfFileAdd" accept=".pdf" onchange="addFiles(this.files)">
                 <button type="button" class="add-button" onclick="document.getElementById('pdfFileAdd').click()">ファイルを追加</button>
                 
-                <div id="fileList" class="file-list sortable"></div>
+                <div id="dropZone" class="drop-zone">
+                    <div class="drop-zone-text">ここにPDFファイルをドラッグ＆ドロップ</div>
+                    <div id="fileList" class="file-list sortable"></div>
+                </div>
                 <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。</p>
                 
                 <button type="button" onclick="submitMergeForm()" class="submit-button">PDFを結合</button>
@@ -572,6 +590,43 @@ function cleanupFiles($dir) {
         
         // 結合用のファイル管理用配列
         let mergeFiles = [];
+        
+        // ドラッグ＆ドロップ機能の初期化
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropZone = document.getElementById('dropZone');
+            
+            // ドラッグイベントの設定
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            // ドラッグオーバー時のスタイル変更
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function() {
+                    dropZone.classList.add('drag-over');
+                }, false);
+            });
+            
+            // ドラッグリーブ時のスタイル変更
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function() {
+                    dropZone.classList.remove('drag-over');
+                }, false);
+            });
+            
+            // ドロップ時の処理
+            dropZone.addEventListener('drop', function(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                
+                addFiles(files);
+            }, false);
+        });
         
         // ファイルを追加する関数
         function addFiles(files) {

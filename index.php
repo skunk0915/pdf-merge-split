@@ -6,6 +6,24 @@ error_reporting(E_ALL);
 // セッション開始
 session_start();
 
+// API: PDFページ数取得用のエンドポイント (非同期リクエスト用)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_page_count') {
+    header('Content-Type: application/json');
+    if (!empty($_FILES['pdfFile']['tmp_name'])) {
+        require_once('vendor/autoload.php');
+        try {
+            $tempPdf = new \setasign\Fpdi\Fpdi();
+            $pageCount = $tempPdf->setSourceFile($_FILES['pdfFile']['tmp_name']);
+            echo json_encode(['success' => true, 'pageCount' => $pageCount]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        }
+    } else {
+        echo json_encode(['success' => false, 'message' => 'ファイルがアップロードされていません。']);
+    }
+    exit;
+}
+
 // アップロードディレクトリの設定
 $uploadDir = 'uploads/';
 $outputDir = 'output/';
@@ -32,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['merge']) && !empty($_FILES['pdfFiles']['name'][0])) {
         $result = mergePdfs($_FILES['pdfFiles']);
         if ($result['success']) {
-            $message = '結合が完了しました。';
+            $message = '結合が完了しました。（結合ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
             $downloadLink = $result['file'];
         } else {
             $message = 'エラー: ' . $result['message'];
@@ -44,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pages = isset($_POST['pages']) ? $_POST['pages'] : '';
         $result = splitPdf($_FILES['pdfFile'], $pages);
         if ($result['success']) {
-            $message = '分割が完了しました。';
+            $message = '分割が完了しました。（分割ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
             $downloadLink = $result['file'];
         } else {
             $message = 'エラー: ' . $result['message'];
@@ -93,12 +111,14 @@ function mergePdfs($files) {
     require_once('vendor/autoload.php');
     
     try {
-        // 標準のFPDIを使用
+        // 標準 of FPDI
         $pdf = new \setasign\Fpdi\Fpdi();
         
+        $totalPageCount = 0;
         // 各PDFファイルを処理
         foreach ($uploadedFiles as $file) {
             $pageCount = $pdf->setSourceFile($file);
+            $totalPageCount += $pageCount;
             
             // 各ページを新しいPDFに追加
             for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
@@ -121,7 +141,12 @@ function mergePdfs($files) {
             @unlink($file);
         }
         
-        return ['success' => true, 'file' => $outputFile];
+        return [
+            'success' => true,
+            'file' => $outputFile,
+            'fileCount' => count($uploadedFiles),
+            'pageCount' => $totalPageCount
+        ];
     } catch (Exception $e) {
         return ['success' => false, 'message' => 'PDF結合エラー: ' . $e->getMessage()];
     }
@@ -194,6 +219,7 @@ function splitPdf($file, $pages) {
         
         // 分割モードの判定
         $singlePageMode = count($pageNumbers) > 1; // 複数ページが指定されている場合は各ページを個別のファイルに
+        $actualPageCount = 0;
         
         if ($singlePageMode) {
             // 各ページを個別のPDFファイルとして保存
@@ -210,7 +236,13 @@ function splitPdf($file, $pages) {
                     $outputFile = $outputDir . $originalFilename . '_page' . $pageNo . '.pdf';
                     $pdf->Output('F', $outputFile);
                     $splitFiles[] = $outputFile;
+                    $actualPageCount++;
                 }
+            }
+            
+            if ($actualPageCount === 0) {
+                @unlink($uploadPath);
+                return ['success' => false, 'message' => '指定されたページが元のPDFに存在しません。'];
             }
             
             // 分割したファイルをZIPにまとめる
@@ -245,7 +277,13 @@ function splitPdf($file, $pages) {
                     
                     $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
                     $pdf->useTemplate($template);
+                    $actualPageCount++;
                 }
+            }
+            
+            if ($actualPageCount === 0) {
+                @unlink($uploadPath);
+                return ['success' => false, 'message' => '指定されたページが元のPDFに存在しません。'];
             }
             
             $outputFile = $outputDir . $originalFilename . '_extracted.pdf';
@@ -255,8 +293,14 @@ function splitPdf($file, $pages) {
         // アップロードされた元ファイルを削除
         @unlink($uploadPath);
         
-        return ['success' => true, 'file' => $outputFile];
+        return [
+            'success' => true,
+            'file' => $outputFile,
+            'fileCount' => $singlePageMode ? count($splitFiles) : 1,
+            'pageCount' => $actualPageCount
+        ];
     } catch (Exception $e) {
+        @unlink($uploadPath);
         return ['success' => false, 'message' => 'PDF分割エラー: ' . $e->getMessage()];
     }
 }
@@ -286,216 +330,7 @@ function cleanupFiles($dir) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDFツール - 結合・分割</title>
-    <style>
-        body {
-            font-family: 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        h1 {
-            color: #2c3e50;
-            text-align: center;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #3498db;
-            padding-bottom: 10px;
-        }
-        .container {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .tab {
-            overflow: hidden;
-            border: 1px solid #ccc;
-            background-color: #f1f1f1;
-            border-radius: 5px 5px 0 0;
-        }
-        .tab button {
-            background-color: inherit;
-            float: left;
-            border: none;
-            outline: none;
-            cursor: pointer;
-            padding: 14px 16px;
-            transition: 0.3s;
-            font-size: 16px;
-            font-weight: bold;
-        }
-        .tab button:hover {
-            background-color: #ddd;
-        }
-        .tab button.active {
-            background-color: #3498db;
-            color: white;
-        }
-        .tabcontent {
-            display: none;
-            padding: 20px;
-            border: 1px solid #ccc;
-            border-top: none;
-            border-radius: 0 0 5px 5px;
-            animation: fadeEffect 1s;
-        }
-        @keyframes fadeEffect {
-            from {opacity: 0;}
-            to {opacity: 1;}
-        }
-        label {
-            display: block;
-            margin: 15px 0 5px;
-            font-weight: bold;
-        }
-        input[type="file"], input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        button[type="submit"] {
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            display: block;
-            margin: 20px 0;
-            transition: background-color 0.3s;
-        }
-        button[type="submit"]:hover {
-            background-color: #2980b9;
-        }
-        .message {
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .download-link {
-            display: inline-block;
-            background-color: #28a745;
-            color: white;
-            text-decoration: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            margin-top: 10px;
-            transition: background-color 0.3s;
-        }
-        .download-link:hover {
-            background-color: #218838;
-        }
-        .note {
-            font-size: 14px;
-            color: #666;
-            margin-top: 5px;
-        }
-        .drop-zone {
-            margin: 10px 0;
-            border: 2px dashed #3498db;
-            border-radius: 4px;
-            background-color: #f9f9f9;
-            position: relative;
-            min-height: 100px;
-            transition: all 0.3s;
-        }
-        .drop-zone.drag-over {
-            background-color: #e8f4fc;
-            border-color: #2980b9;
-        }
-        .drop-zone-text {
-            text-align: center;
-            padding: 20px;
-            color: #7f8c8d;
-            font-size: 16px;
-        }
-        .file-list {
-            padding: 10px;
-            max-height: 250px;
-            overflow-y: auto;
-        }
-        .dragging {
-            opacity: 0.5;
-        }
-        .drag-over {
-            border-top: 2px solid #3498db;
-        }
-        .file-list:empty {
-            display: none;
-        }
-        .file-item {
-            padding: 5px;
-            margin-bottom: 5px;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            align-items: center;
-            cursor: move;
-        }
-        .file-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-        }
-        .file-item .handle {
-            margin-right: 10px;
-            color: #999;
-            cursor: move;
-        }
-        .file-item .remove {
-            margin-left: auto;
-            color: #e74c3c;
-            cursor: pointer;
-            font-weight: bold;
-            padding: 0 5px;
-        }
-        .file-item .remove:hover {
-            color: #c0392b;
-        }
-        .add-button, .submit-button {
-            background-color: #3498db;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            margin: 10px 0;
-            transition: background-color 0.3s;
-        }
-        .add-button:hover, .submit-button:hover {
-            background-color: #2980b9;
-        }
-        input[name="pdfFileAdd"] {
-            display: none;
-        }
-        .file-name {
-            font-weight: bold;
-        }
-        .file-size {
-            color: #666;
-            font-size: 12px;
-            margin-left: 10px;
-        }
-        .aaa{
-            display: block;
-        }
-    </style>
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <h1>PDFツール - 結合・分割</h1>
@@ -519,6 +354,18 @@ function cleanupFiles($dir) {
                 </div>
                 <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。</p>
                 
+                <!-- リアルタイムサマリー表示領域 -->
+                <div id="mergeSummary" class="summary-container" style="display: none;">
+                    <div class="summary-item">
+                        <span class="summary-label">選択されたファイル数:</span>
+                        <span id="mergeFileCount" class="summary-value">0</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">合計ページ数:</span>
+                        <span id="mergePageCount" class="summary-value">0</span>
+                    </div>
+                </div>
+
                 <button type="button" onclick="submitMergeForm()" class="submit-button">PDFを結合</button>
                 <div id="fileInputsContainer" style="display: none;"></div>
             </form>
@@ -528,9 +375,21 @@ function cleanupFiles($dir) {
         <div id="split" class="tabcontent">
             <form action="" method="post" enctype="multipart/form-data">
                 <label for="pdfFile">PDFファイルを選択:</label>
-                <input type="file" name="pdfFile" id="pdfFile" accept=".pdf" required onchange="displayFileNames('pdfFile', 'singleFileList')">
+                <input type="file" name="pdfFile" id="pdfFile" accept=".pdf" required onchange="onSplitFileChange(this)">
                 <div id="singleFileList" class="file-list"></div>
                 
+                <!-- リアルタイムサマリー表示領域 -->
+                <div id="splitSummary" class="summary-container" style="display: none;">
+                    <div class="summary-item">
+                        <span class="summary-label">選択されたファイル数:</span>
+                        <span class="summary-value">1</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">合計ページ数:</span>
+                        <span id="splitPageCount" class="summary-value">0</span>
+                    </div>
+                </div>
+
                 <label for="pages">ページ指定（オプション）:</label>
                 <input type="text" name="pages" id="pages" placeholder="例: 1,3-5,7">
                 <p class="note">※ 空白の場合は全ページが対象になります。<br>
@@ -563,6 +422,58 @@ function cleanupFiles($dir) {
             evt.currentTarget.className += " active";
         }
         
+        // ページ数を非同期で取得する関数
+        async function getPageCount(file) {
+            const formData = new FormData();
+            formData.append('action', 'get_page_count');
+            formData.append('pdfFile', file);
+            
+            try {
+                const response = await fetch('', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.success) {
+                    return data.pageCount;
+                }
+            } catch (e) {
+                console.error('Error fetching page count:', e);
+            }
+            return null;
+        }
+
+        // 単一ファイル（分割）選択時の処理
+        async function onSplitFileChange(input) {
+            displayFileNames('pdfFile', 'singleFileList');
+            
+            const summaryDiv = document.getElementById('splitSummary');
+            const pageCountVal = document.getElementById('splitPageCount');
+            
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                summaryDiv.style.display = 'flex';
+                pageCountVal.textContent = '解析中...';
+                
+                const pageCount = await getPageCount(file);
+                if (pageCount !== null) {
+                    pageCountVal.textContent = pageCount + 'ページ';
+                    // ファイル表示にもページ数を追加
+                    const fileItem = document.querySelector('#singleFileList .file-item');
+                    if (fileItem) {
+                        const pageBadge = document.createElement('span');
+                        pageBadge.className = 'file-page-count';
+                        pageBadge.textContent = pageCount + 'ページ';
+                        fileItem.insertBefore(pageBadge, fileItem.querySelector('.file-size'));
+                    }
+                } else {
+                    pageCountVal.textContent = 'エラー';
+                }
+            } else {
+                summaryDiv.style.display = 'none';
+            }
+        }
+
         // 単一ファイル選択時にファイル名を表示する関数
         function displayFileNames(inputId, listId) {
             const input = document.getElementById(inputId);
@@ -632,17 +543,53 @@ function cleanupFiles($dir) {
         });
         
         // ファイルを追加する関数
-        function addFiles(files) {
+        async function addFiles(files) {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 // PDFファイルかチェック
                 if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                    file.pageCount = null;
                     mergeFiles.push(file);
+                    
+                    // 非同期でページ数を取得して反映
+                    getPageCount(file).then(pageCount => {
+                        file.pageCount = pageCount;
+                        updateFileList();
+                        updateMergeSummary();
+                    });
                 }
             }
             updateFileList();
+            updateMergeSummary();
         }
         
+        // 結合の集計表示を更新する関数
+        function updateMergeSummary() {
+            const summaryDiv = document.getElementById('mergeSummary');
+            const fileCountVal = document.getElementById('mergeFileCount');
+            const pageCountVal = document.getElementById('mergePageCount');
+            
+            if (mergeFiles.length > 0) {
+                summaryDiv.style.display = 'flex';
+                fileCountVal.textContent = mergeFiles.length;
+                
+                // ページ数の合計を計算
+                let totalPages = 0;
+                let loading = false;
+                for (let file of mergeFiles) {
+                    if (file.pageCount === null) {
+                        loading = true;
+                    } else {
+                        totalPages += file.pageCount;
+                    }
+                }
+                
+                pageCountVal.textContent = loading ? '解析中...' : totalPages + 'ページ';
+            } else {
+                summaryDiv.style.display = 'none';
+            }
+        }
+
         // ファイルリストを更新する関数
         function updateFileList() {
             const fileList = document.getElementById('fileList');
@@ -661,26 +608,33 @@ function cleanupFiles($dir) {
                     handle.innerHTML = '&#8597;';
                     fileItem.appendChild(handle);
                     
-                    // ファイル名とサイズを表示
+                    // ファイル名を表示
                     const fileName = document.createElement('span');
                     fileName.className = 'file-name';
                     fileName.textContent = file.name;
+                    fileItem.appendChild(fileName);
                     
+                    // ページ数表示を追加
+                    const pageBadge = document.createElement('span');
+                    pageBadge.className = 'file-page-count';
+                    pageBadge.textContent = file.pageCount !== null ? file.pageCount + 'ページ' : '解析中...';
+                    fileItem.appendChild(pageBadge);
+                    
+                    // サイズ表示
                     const fileSize = document.createElement('span');
                     fileSize.className = 'file-size';
                     fileSize.textContent = formatFileSize(file.size);
+                    fileItem.appendChild(fileSize);
                     
                     // 削除ボタン
                     const removeBtn = document.createElement('span');
                     removeBtn.className = 'remove';
-                    removeBtn.textContent = '\u00D7'; // × is the multiplication sign (×)
+                    removeBtn.textContent = '\u00D7';
                     removeBtn.onclick = function() {
                         removeFile(i);
                     };
-                    
-                    fileItem.appendChild(fileName);
-                    fileItem.appendChild(fileSize);
                     fileItem.appendChild(removeBtn);
+                    
                     fileList.appendChild(fileItem);
                 }
                 
@@ -693,6 +647,7 @@ function cleanupFiles($dir) {
         function removeFile(index) {
             mergeFiles.splice(index, 1);
             updateFileList();
+            updateMergeSummary();
         }
         
         // ソータブルを初期化する関数
@@ -743,6 +698,7 @@ function cleanupFiles($dir) {
                         
                         // リストを更新
                         updateFileList();
+                        updateMergeSummary();
                     }
                     this.classList.remove('drag-over');
                 });

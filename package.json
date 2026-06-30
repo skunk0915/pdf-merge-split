@@ -1,0 +1,14 @@
+{
+  "name": "pdf-merge-split",
+  "version": "1.0.0",
+  "description": "PDF merge and split tool",
+  "main": "index.php",
+  "scripts": {
+    "build": "sass scss/style.scss css/style.css",
+    "watch": "sass --watch scss/style.scss css/style.css"
+  },
+  "devDependencies": {
+    "sass": "^1.77.0",
+    "ssh2-sftp-client": "^12.1.1"
+  }
+}

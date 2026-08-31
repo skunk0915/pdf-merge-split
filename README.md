@@ -14,7 +14,11 @@ PHPを使用した簡易的なPDFの結合・分割ツールです。
     - **結合完了時**: `結合が完了しました。（結合ファイル数: X、合計ページ数: Yページ）`
     - **分割完了時**: `分割が完了しました。（分割ファイル数: X、合計ページ数: Yページ）`
 
+## 公開URL
+- 本番環境（Xserver VPS）: `https://pdf-merge-split.162.43.39.238.sslip.io/`
+
 ## 必要環境
-- PHP 7.4 以上
+- PHP 7.4 / PHP 8.x 以上
 - Composer
 - `setasign/fpdi` （Composer依存関係に含まれています）
+- Nginx / Apache

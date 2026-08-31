@@ -34,7 +34,7 @@ h1 {
     outline: none;
     cursor: pointer;
     padding: 14px 16px;
-    transition: 0.3s;
+    transition: background-color 0.2s;
     font-size: 16px;
     font-weight: bold;
 }
@@ -51,7 +51,7 @@ h1 {
     border: 1px solid #ccc;
     border-top: none;
     border-radius: 0 0 5px 5px;
-    animation: fadeEffect 1s;
+    animation: fadeEffect 0.3s;
 }
 @keyframes fadeEffect {
     from {opacity: 0;}
@@ -86,19 +86,24 @@ button[type="submit"]:hover {
     background-color: #2980b9;
 }
 .message {
-    padding: 15px;
+    padding: 15px 20px;
     margin: 20px 0;
-    border-radius: 4px;
+    border-radius: 6px;
+    font-size: 15px;
+    line-height: 1.5;
 }
 .success {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+    background-color: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+    border-left: 6px solid #22c55e;
 }
 .error {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
+    background-color: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    border-left: 6px solid #dc2626;
+    font-weight: bold;
 }
 .download-link {
     display: inline-block;
@@ -114,15 +119,16 @@ button[type="submit"]:hover {
     background-color: #218838;
 }
 .note {
-    font-size: 14px;
-    color: #666;
-    margin-top: 5px;
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 6px;
+    line-height: 1.5;
 }
 .drop-zone {
     margin: 10px 0;
     border: 2px dashed #3498db;
-    border-radius: 4px;
-    background-color: #f9f9f9;
+    border-radius: 6px;
+    background-color: #f8fafc;
     position: relative;
     min-height: 100px;
     transition: all 0.3s;
@@ -135,7 +141,7 @@ button[type="submit"]:hover {
     text-align: center;
     padding: 20px;
     color: #7f8c8d;
-    font-size: 16px;
+    font-size: 15px;
 }
 .file-list {
     padding: 10px;
@@ -152,12 +158,13 @@ button[type="submit"]:hover {
     display: none;
 }
 .file-item {
-    padding: 5px;
+    padding: 6px 10px;
     margin-bottom: 5px;
     border-bottom: 1px solid #eee;
     display: flex;
     align-items: center;
-    cursor: move;
+    background: #ffffff;
+    border-radius: 4px;
 }
 .file-item:last-child {
     border-bottom: none;
@@ -174,6 +181,7 @@ button[type="submit"]:hover {
     cursor: pointer;
     font-weight: bold;
     padding: 0 5px;
+    font-size: 16px;
 }
 .file-item .remove:hover {
     color: #c0392b;
@@ -182,12 +190,13 @@ button[type="submit"]:hover {
     background-color: #3498db;
     color: white;
     border: none;
-    padding: 10px 15px;
-    border-radius: 4px;
+    padding: 10px 18px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 15px;
+    font-weight: 500;
     margin: 10px 0;
-    transition: background-color 0.3s;
+    transition: background-color 0.2s;
 }
 .add-button:hover, .submit-button:hover {
     background-color: #2980b9;
@@ -196,47 +205,177 @@ input[name="pdfFileAdd"] {
     display: none;
 }
 .file-name {
-    font-weight: bold;
+    font-weight: 500;
+    color: #1e293b;
 }
 .file-size {
-    color: #666;
+    color: #64748b;
     font-size: 12px;
     margin-left: 10px;
 }
-.aaa{
-    display: block;
+
+/* 通常時の上限ガイドバッジ（ニュートラルカラー） */
+.limit-badge {
+    display: inline-block;
+    background-color: #f1f5f9;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    font-weight: 500;
 }
 
 /* リアルタイム集計表示用のスタイル */
 .summary-container {
-    background-color: #e8f4fc;
-    border: 1px solid #b3d7f2;
-    border-radius: 4px;
-    padding: 10px 15px;
-    margin: 15px 0;
+    background-color: #f8fafc;
+    border: 1.5px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 16px 0;
     display: flex;
-    justify-content: space-around;
-    font-weight: bold;
-    color: #2c3e50;
-    animation: fadeEffect 0.5s;
+    flex-direction: column;
+    gap: 12px;
+    box-sizing: border-box;
+    animation: fadeEffect 0.3s;
+    transition: all 0.3s ease;
+
+    /* 上限超過時の赤色警告スタイル */
+    &.limit-exceeded {
+        background-color: #fef2f2 !important;
+        border: 2px solid #ef4444 !important;
+        box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+
+        .summary-item {
+            background-color: #ffffff;
+            border-color: #fca5a5;
+        }
+
+        .summary-label {
+            color: #991b1b !important;
+        }
+
+        .summary-value {
+            color: #dc2626 !important;
+            font-weight: 800;
+        }
+    }
 }
+
+.summary-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    width: 100%;
+}
+
 .summary-item {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    gap: 4px;
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 12px;
+    transition: all 0.2s ease;
 }
+
 .summary-label {
-    margin-right: 5px;
-    color: #7f8c8d;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
 }
+
 .summary-value {
-    font-size: 1.1em;
-    color: #2980b9;
+    font-size: 1.15em;
+    color: #0284c7;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
 }
+
+/* 超過バッジ（赤色） */
+.excess-badge {
+    display: inline-block;
+    background-color: #dc2626;
+    color: #ffffff !important;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px 8px;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(220, 38, 38, 0.3);
+}
+
+/* サマリー内の警告メッセージ領域 */
+.summary-warning {
+    width: 100%;
+    box-sizing: border-box;
+    background-color: #fee2e2;
+    border: 1.5px solid #ef4444;
+    border-radius: 6px;
+    padding: 12px 14px;
+    color: #991b1b;
+    font-size: 13.5px;
+    font-weight: bold;
+    text-align: center;
+    line-height: 1.5;
+}
+
+/* クライアントサイドのエラー通知領域（赤色ボックス） */
+.client-error-box {
+    display: none;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 14px 18px;
+    margin: 14px 0;
+    border-radius: 6px;
+    background-color: #fef2f2;
+    border: 2px solid #ef4444;
+    border-left: 6px solid #dc2626;
+    color: #991b1b;
+    font-size: 14px;
+    line-height: 1.5;
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.1);
+
+    .error-title {
+        margin: 0 0 8px 0;
+        font-weight: bold;
+        font-size: 15px;
+        color: #b91c1c;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+
+    li {
+        margin-bottom: 4px;
+        color: #991b1b;
+        font-weight: 500;
+    }
+}
+
 .file-page-count {
-    background-color: #ecf0f1;
-    color: #7f8c8d;
+    background-color: #f1f5f9;
+    color: #475569;
     font-size: 11px;
     padding: 2px 6px;
     border-radius: 10px;
     margin-left: 10px;
+}
+
+/* ボタン無効化時 */
+button:disabled, .submit-button:disabled {
+    background-color: #cbd5e1 !important;
+    color: #64748b !important;
+    border: 1px solid #94a3b8 !important;
+    cursor: not-allowed !important;
+    opacity: 0.85;
 }

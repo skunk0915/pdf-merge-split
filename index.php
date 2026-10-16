@@ -288,11 +288,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
 
 // フォーム送信時の処理
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // PDFの結合処理
+    // PDFの結合処理（ページ単位回転対応）
     if (isset($_POST['merge'])) {
         if (!empty($_FILES['pdfFiles']['name'][0])) {
             $expectedCount = isset($_POST['expected_count']) ? (int)$_POST['expected_count'] : null;
-            $result = mergePdfs($_FILES['pdfFiles'], $expectedCount);
+            $fileRotations = isset($_POST['file_rotations']) ? $_POST['file_rotations'] : null;
+            $result = mergePdfs($_FILES['pdfFiles'], $expectedCount, $fileRotations);
             if ($result['success']) {
                 $message = '結合が完了しました。（結合ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
                 $downloadLink = $result['file'];
@@ -305,11 +306,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // PDFの分割処理
+    // PDFの分割処理（ページ単位回転対応）
     if (isset($_POST['split'])) {
         if (!empty($_FILES['pdfFile']['name'])) {
             $pages = isset($_POST['pages']) ? trim($_POST['pages']) : '';
-            $result = splitPdf($_FILES['pdfFile'], $pages);
+            $splitRotations = isset($_POST['split_rotations']) ? $_POST['split_rotations'] : null;
+            $result = splitPdf($_FILES['pdfFile'], $pages, $splitRotations);
             if ($result['success']) {
                 $message = '分割が完了しました。（分割ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
                 $downloadLink = $result['file'];
@@ -322,7 +324,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // PDFの回転処理
+    // PDF・画像の回転処理
     if (isset($_POST['rotate'])) {
         if (!empty($_FILES['pdfFileRotate']['name'])) {
             $rotations = isset($_POST['rotations']) ? $_POST['rotations'] : '';
@@ -334,23 +336,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $message = 'エラー: ' . $result['message'];
             }
         } else {
-            $message = 'エラー: 回転するPDFファイルが選択されていないか、送信データが破損しています。';
+            $message = 'エラー: 回転するファイルが選択されていないか、送信データが破損しています。';
             writeLog("Rotate request failed: no file found in \$_FILES", "WARN");
         }
     }
 }
 
 /**
- * 複数のPDFファイルを結合する
+ * 複数のPDFファイルを結合する（ページ単位回転対応）
  * 
  * @param array $files アップロードされたファイル情報
  * @param int|null $expectedCount 送信予定ファイル数
+ * @param string|array|null $fileRotationsJson ファイルごとのページ回転情報
  * @return array 処理結果
  */
-function mergePdfs($files, $expectedCount = null) {
+function mergePdfs($files, $expectedCount = null, $fileRotationsJson = null) {
     global $uploadDir, $outputDir;
     
     $uploadedCount = isset($files['name']) ? count($files['name']) : 0;
+    
+    // 各ファイルのページごとの回転情報（JSON）をパース
+    $fileRotations = [];
+    if (!empty($fileRotationsJson)) {
+        if (is_array($fileRotationsJson)) {
+            $fileRotations = $fileRotationsJson;
+        } else {
+            $decoded = json_decode($fileRotationsJson, true);
+            if (is_array($decoded)) {
+                $fileRotations = $decoded;
+            }
+        }
+    }
     
     // ファイル数上限チェック
     if ($expectedCount !== null && $expectedCount > MAX_MERGE_FILES) {
@@ -446,7 +462,7 @@ function mergePdfs($files, $expectedCount = null) {
         $pdf = new \setasign\Fpdi\Fpdi();
         $totalPageCount = 0;
         
-        foreach ($uploadedFiles as $item) {
+        foreach ($uploadedFiles as $index => $item) {
             $filePath = $item['path'];
             $ext = $item['ext'];
             $sourcePdf = $filePath;
@@ -469,10 +485,22 @@ function mergePdfs($files, $expectedCount = null) {
             $pageCount = $pdf->setSourceFile($sourcePdf);
             $totalPageCount += $pageCount;
             
+            $itemRotations = $fileRotations[$index] ?? [];
+            
             for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
                 $template = $pdf->importPage($pageNo);
                 $size = $pdf->getTemplateSize($template);
-                $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                
+                $angle = 0;
+                if (isset($itemRotations[$pageNo])) {
+                    $angle = (int)$itemRotations[$pageNo];
+                } elseif (isset($itemRotations[(string)$pageNo])) {
+                    $angle = (int)$itemRotations[(string)$pageNo];
+                }
+                $angle = (($angle % 360) + 360) % 360;
+                $angle = (int)(round($angle / 90) * 90) % 360;
+                
+                $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
                 $pdf->useTemplate($template);
             }
         }
@@ -511,18 +539,19 @@ function mergePdfs($files, $expectedCount = null) {
 }
 
 /**
- * PDFファイルを指定されたページで分割する
+ * PDFファイルを指定されたページで分割する（ページ単位回転・画像/テキスト対応）
  * 
  * @param array $file アップロードされたファイル情報
  * @param string $pages 分割するページ番号（例: "1,3-5,7"）
+ * @param string|array|null $rotationsJson ページごとの回転角度情報
  * @return array 処理結果
  */
-function splitPdf($file, $pages) {
+function splitPdf($file, $pages, $rotationsJson = null) {
     global $uploadDir, $outputDir;
     
     if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
         $errorCode = $file['error'] ?? UPLOAD_ERR_NO_FILE;
-        $name = $file['name'] ?? 'PDFファイル';
+        $name = $file['name'] ?? 'ファイル';
         writeLog("Split upload error: code {$errorCode} for {$name}", "WARN");
         return ['success' => false, 'message' => getUploadErrorMessage($errorCode, $name)];
     }
@@ -530,14 +559,28 @@ function splitPdf($file, $pages) {
     $tmpName = $file['tmp_name'];
     $name = $file['name'];
     $size = $file['size'];
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
     
-    if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== 'pdf') {
-        return ['success' => false, 'message' => 'PDFファイルのみアップロードできます。'];
+    if (!in_array($ext, ALLOWED_MERGE_EXTENSIONS, true)) {
+        return ['success' => false, 'message' => '対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。'];
     }
     
     if ($size > MAX_SINGLE_FILE_SIZE || filesize($tmpName) > MAX_SINGLE_FILE_SIZE) {
         writeLog("Split failed: file {$name} exceeds 100MB", "WARN");
         return ['success' => false, 'message' => 'ファイルサイズが上限（100MB）を超えています。'];
+    }
+    
+    // 回転情報のパース
+    $rotations = [];
+    if (!empty($rotationsJson)) {
+        if (is_array($rotationsJson)) {
+            $rotations = $rotationsJson;
+        } else {
+            $decoded = json_decode($rotationsJson, true);
+            if (is_array($decoded)) {
+                $rotations = $decoded;
+            }
+        }
     }
     
     $uploadPath = $uploadDir . uniqid() . '_' . $name;
@@ -548,7 +591,22 @@ function splitPdf($file, $pages) {
     
     require_once('vendor/autoload.php');
     
+    $tempConvertedPdf = null;
     try {
+        $sourceFile = $uploadPath;
+        if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) {
+            $tempConvertedPdf = $uploadDir . uniqid('img_split_') . '.pdf';
+            convertImageToPdf($uploadPath, $tempConvertedPdf);
+            $sourceFile = $tempConvertedPdf;
+        } elseif ($ext === 'txt') {
+            $tempConvertedPdf = $uploadDir . uniqid('txt_split_') . '.pdf';
+            convertTextToPdf($uploadPath, $tempConvertedPdf);
+            $sourceFile = $tempConvertedPdf;
+        }
+        
+        $tempPdf = new \setasign\Fpdi\Fpdi();
+        $pageCount = $tempPdf->setSourceFile($sourceFile);
+        
         $pageNumbers = [];
         if (!empty($pages)) {
             $parts = explode(',', $pages);
@@ -564,6 +622,7 @@ function splitPdf($file, $pages) {
                         }
                     } else {
                         @unlink($uploadPath);
+                        if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
                         return ['success' => false, 'message' => "ページ範囲指定が無効です: 「{$part}」"];
                     }
                 } else {
@@ -572,15 +631,12 @@ function splitPdf($file, $pages) {
                         $pageNumbers[] = $num;
                     } else {
                         @unlink($uploadPath);
+                        if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
                         return ['success' => false, 'message' => "ページ番号が無効です: 「{$part}」"];
                     }
                 }
             }
         }
-        
-        $sourceFile = $uploadPath;
-        $tempPdf = new \setasign\Fpdi\Fpdi();
-        $pageCount = $tempPdf->setSourceFile($sourceFile);
         
         if (empty($pageNumbers)) {
             for ($i = 1; $i <= $pageCount; $i++) {
@@ -603,7 +659,16 @@ function splitPdf($file, $pages) {
                     $template = $pdf->importPage($pageNo);
                     $size = $pdf->getTemplateSize($template);
                     
-                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                    $angle = 0;
+                    if (isset($rotations[$pageNo])) {
+                        $angle = (int)$rotations[$pageNo];
+                    } elseif (isset($rotations[(string)$pageNo])) {
+                        $angle = (int)$rotations[(string)$pageNo];
+                    }
+                    $angle = (($angle % 360) + 360) % 360;
+                    $angle = (int)(round($angle / 90) * 90) % 360;
+                    
+                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
                     $pdf->useTemplate($template);
                     
                     $outputFile = $outputDir . $originalFilename . '_page' . $pageNo . '.pdf';
@@ -615,7 +680,8 @@ function splitPdf($file, $pages) {
             
             if ($actualPageCount === 0) {
                 @unlink($uploadPath);
-                return ['success' => false, 'message' => "指定されたページ（" . implode(',', $pageNumbers) . "）が元のPDF（全{$pageCount}ページ）に存在しません。"];
+                if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
+                return ['success' => false, 'message' => "指定されたページ（" . implode(',', $pageNumbers) . "）が元のファイル（全{$pageCount}ページ）に存在しません。"];
             }
             
             $zipFile = $outputDir . $originalFilename . '_split.zip';
@@ -644,7 +710,16 @@ function splitPdf($file, $pages) {
                     $template = $pdf->importPage($pageNo);
                     $size = $pdf->getTemplateSize($template);
                     
-                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
+                    $angle = 0;
+                    if (isset($rotations[$pageNo])) {
+                        $angle = (int)$rotations[$pageNo];
+                    } elseif (isset($rotations[(string)$pageNo])) {
+                        $angle = (int)$rotations[(string)$pageNo];
+                    }
+                    $angle = (($angle % 360) + 360) % 360;
+                    $angle = (int)(round($angle / 90) * 90) % 360;
+                    
+                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
                     $pdf->useTemplate($template);
                     $actualPageCount++;
                 }
@@ -652,7 +727,8 @@ function splitPdf($file, $pages) {
             
             if ($actualPageCount === 0) {
                 @unlink($uploadPath);
-                return ['success' => false, 'message' => "指定されたページが元のPDF（全{$pageCount}ページ）に存在しません。"];
+                if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
+                return ['success' => false, 'message' => "指定されたページが元のファイル（全{$pageCount}ページ）に存在しません。"];
             }
             
             $outputFile = $outputDir . $originalFilename . '_extracted.pdf';
@@ -660,6 +736,9 @@ function splitPdf($file, $pages) {
         }
         
         @unlink($uploadPath);
+        if ($tempConvertedPdf) {
+            @unlink($tempConvertedPdf);
+        }
         writeLog("Split successful: {$name} -> {$actualPageCount} pages", "INFO");
         
         return [
@@ -670,13 +749,16 @@ function splitPdf($file, $pages) {
         ];
     } catch (Exception $e) {
         @unlink($uploadPath);
+        if ($tempConvertedPdf) {
+            @unlink($tempConvertedPdf);
+        }
         writeLog("Split exception: " . $e->getMessage(), "ERROR");
-        return ['success' => false, 'message' => 'PDF分割エラー: ' . $e->getMessage()];
+        return ['success' => false, 'message' => '分割処理エラー: ' . $e->getMessage()];
     }
 }
 
 /**
- * PDFファイルの各ページを90度単位で回転する
+ * PDF・画像・テキストファイルの各ページを90度単位で回転する
  * 
  * @param array $file アップロードされたファイル情報
  * @param string|array $rotationsJson ページごとの回転角度情報 (JSON文字列)
@@ -687,7 +769,7 @@ function rotatePdf($file, $rotationsJson) {
 
     if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
         $errorCode = $file['error'] ?? UPLOAD_ERR_NO_FILE;
-        $name = $file['name'] ?? 'PDFファイル';
+        $name = $file['name'] ?? 'ファイル';
         writeLog("Rotate upload error: code {$errorCode} for {$name}", "WARN");
         return ['success' => false, 'message' => getUploadErrorMessage($errorCode, $name)];
     }
@@ -695,9 +777,10 @@ function rotatePdf($file, $rotationsJson) {
     $tmpName = $file['tmp_name'];
     $name = $file['name'];
     $size = $file['size'];
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
 
-    if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== 'pdf') {
-        return ['success' => false, 'message' => 'PDFファイルのみアップロードできます。'];
+    if (!in_array($ext, ALLOWED_MERGE_EXTENSIONS, true)) {
+        return ['success' => false, 'message' => '対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。'];
     }
 
     if ($size > MAX_SINGLE_FILE_SIZE || filesize($tmpName) > MAX_SINGLE_FILE_SIZE) {
@@ -726,13 +809,26 @@ function rotatePdf($file, $rotationsJson) {
 
     require_once('vendor/autoload.php');
 
+    $tempConvertedPdf = null;
     try {
+        $sourceFile = $uploadPath;
+        if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) {
+            $tempConvertedPdf = $uploadDir . uniqid('img_rot_') . '.pdf';
+            convertImageToPdf($uploadPath, $tempConvertedPdf);
+            $sourceFile = $tempConvertedPdf;
+        } elseif ($ext === 'txt') {
+            $tempConvertedPdf = $uploadDir . uniqid('txt_rot_') . '.pdf';
+            convertTextToPdf($uploadPath, $tempConvertedPdf);
+            $sourceFile = $tempConvertedPdf;
+        }
+
         $pdf = new \setasign\Fpdi\Fpdi();
-        $pageCount = $pdf->setSourceFile($uploadPath);
+        $pageCount = $pdf->setSourceFile($sourceFile);
 
         if ($pageCount === 0) {
             @unlink($uploadPath);
-            return ['success' => false, 'message' => 'PDFのページ数が0です。'];
+            if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
+            return ['success' => false, 'message' => 'ページの解析に失敗しました。'];
         }
 
         $rotatedPageCount = 0;
@@ -765,6 +861,9 @@ function rotatePdf($file, $rotationsJson) {
         $pdf->Output('F', $outputFile);
 
         @unlink($uploadPath);
+        if ($tempConvertedPdf) {
+            @unlink($tempConvertedPdf);
+        }
         writeLog("Rotate successful: {$name} ({$pageCount} pages, {$rotatedPageCount} rotated) -> {$outputFile}", "INFO");
 
         return [
@@ -776,8 +875,11 @@ function rotatePdf($file, $rotationsJson) {
         ];
     } catch (Exception $e) {
         @unlink($uploadPath);
+        if ($tempConvertedPdf) {
+            @unlink($tempConvertedPdf);
+        }
         writeLog("Rotate exception: " . $e->getMessage(), "ERROR");
-        return ['success' => false, 'message' => 'PDF回転エラー: ' . $e->getMessage()];
+        return ['success' => false, 'message' => '回転処理エラー: ' . $e->getMessage()];
     }
 }
 
@@ -814,8 +916,8 @@ function cleanupFiles($dir) {
     
     <div class="container">
         <div class="tab">
-            <button class="tablinks active" onclick="openTab(event, 'merge')">PDF結合</button>
-            <button class="tablinks" onclick="openTab(event, 'split')">PDF分割</button>
+            <button class="tablinks active" onclick="openTab(event, 'merge')">PDF結合・変換</button>
+            <button class="tablinks" onclick="openTab(event, 'split')">PDF分割・抽出</button>
             <button class="tablinks" onclick="openTab(event, 'rotate')">PDF回転</button>
         </div>
         
@@ -835,7 +937,8 @@ function cleanupFiles($dir) {
                     <div id="fileList" class="file-list sortable"></div>
                 </div>
                 <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。<br>
-                   ※ 画像（JPG, PNG, GIF, WebP）やテキスト（TXT）も自動でPDFページに変換され、PDFとの混在結合や単体変換が可能です。<br>
+                   ※ 各ファイル右側の「🔄 回転・プレビュー」でページを展開し、ページ単位で90度回転を設定できます。<br>
+                   ※ 画像（JPG, PNG, GIF, WebP）やテキスト（TXT）も自動でPDFページに変換され、PDFとの混在結合や単体変換・回転が可能です。<br>
                    ※ 一度に処理できるファイル数は最大100個、合計サイズは最大200MBまでです。</p>
                 
                 <!-- リアルタイムサマリー表示領域 -->
@@ -857,6 +960,7 @@ function cleanupFiles($dir) {
                     <div id="mergeWarningText" class="summary-warning" style="display: none;"></div>
                 </div>
 
+                <input type="hidden" name="file_rotations" id="fileRotationsInput" value="[]">
                 <button type="button" id="mergeSubmitBtn" onclick="submitMergeForm()" class="submit-button">PDFを結合</button>
                 <div id="fileInputsContainer" style="display: none;"></div>
             </form>
@@ -865,9 +969,9 @@ function cleanupFiles($dir) {
         <!-- PDF分割タブ -->
         <div id="split" class="tabcontent">
             <form action="" method="post" enctype="multipart/form-data" id="splitForm">
-                <div class="limit-badge">上限: 1ファイル最大100MB</div>
-                <label for="pdfFile">PDFファイルを選択:</label>
-                <input type="file" name="pdfFile" id="pdfFile" accept=".pdf" required onchange="onSplitFileChange(this)">
+                <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
+                <label for="pdfFile">ファイルを選択（PDF・画像・テキスト）:</label>
+                <input type="file" name="pdfFile" id="pdfFile" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" required onchange="onSplitFileChange(this)">
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="splitClientError" class="client-error-box"></div>
@@ -886,19 +990,40 @@ function cleanupFiles($dir) {
                             <span id="splitPageCount" class="summary-value">0ページ</span>
                         </div>
                         <div class="summary-item">
+                            <span class="summary-label">抽出ページ数:</span>
+                            <span id="splitSelectedCount" class="summary-value">0ページ</span>
+                        </div>
+                        <div class="summary-item">
                             <span class="summary-label">ファイルサイズ:</span>
                             <span id="splitFileSize" class="summary-value">0 MB</span>
                         </div>
                     </div>
                 </div>
 
+                <!-- 分割プレビュー＆回転セクション -->
+                <div id="splitPreviewSection" class="split-preview-section" style="display: none;">
+                    <div class="split-toolbar">
+                        <span class="split-toolbar-title">ページ選択 ＆ 回転（サムネイルをクリックして90度回転できます）</span>
+                        <div class="split-toolbar-group">
+                            <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(true)">すべて選択</button>
+                            <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(false)">選択解除</button>
+                            <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(90)">全ページ 右90° ↻</button>
+                            <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(-90)">全ページ 左90° ↺</button>
+                            <button type="button" class="tool-btn-sm reset" onclick="resetAllSplitRotations()">回転リセット</button>
+                        </div>
+                    </div>
+                    <div id="splitPagesGrid" class="split-pages-grid"></div>
+                </div>
+
                 <label for="pages">ページ指定（オプション）:</label>
-                <input type="text" name="pages" id="pages" placeholder="例: 1,3-5,7">
-                <p class="note">※ 空白の場合は全ページが対象になります。<br>
+                <input type="text" name="pages" id="pages" placeholder="例: 1,3-5,7" oninput="onSplitPagesTextInput(this.value)">
+                <p class="note">※ 上のプレビュー一覧でチェックボックスをクリックして選択するか、直接ページ番号を指定できます。<br>
+                   ※ 空白の場合は全ページが対象になります。<br>
                    ※ カンマ区切りでページ番号を指定できます（例: 1,3,5）<br>
                    ※ ハイフンで範囲指定もできます（例: 1-5,7-9）<br>
                    ※ 1ファイルあたり最大100MBまでアップロード可能です。</p>
                 
+                <input type="hidden" name="split_rotations" id="splitRotationsInput" value="{}">
                 <button type="submit" name="split" id="splitSubmitBtn" class="submit-button">PDFを分割</button>
             </form>
         </div>
@@ -906,18 +1031,19 @@ function cleanupFiles($dir) {
         <!-- PDF回転タブ -->
         <div id="rotate" class="tabcontent">
             <form action="" method="post" enctype="multipart/form-data" id="rotateForm">
-                <div class="limit-badge">上限: 1ファイル最大100MB</div>
-                <label for="pdfFileRotateInput">PDFファイルを選択:</label>
-                <input type="file" id="pdfFileRotateInput" accept=".pdf" onchange="onRotateFileChange(this)">
+                <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
+                <label for="pdfFileRotateInput">ファイルを選択（PDF・画像・テキスト）:</label>
+                <input type="file" id="pdfFileRotateInput" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" onchange="onRotateFileChange(this)">
                 <button type="button" class="add-button" onclick="document.getElementById('pdfFileRotateInput').click()">ファイルを選択</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="rotateClientError" class="client-error-box"></div>
                 
                 <div id="rotateDropZone" class="drop-zone">
-                    <div id="rotateDropZoneText" class="drop-zone-text">ここにPDFファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
+                    <div id="rotateDropZoneText" class="drop-zone-text">ここにPDF・画像・テキストファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
                     <div id="rotateSingleFileList" class="file-list"></div>
                 </div>
+                <p class="note">※ 「PDF結合・変換」画面や「PDF分割・抽出」画面でも、ファイルをアップロードしたまま各ページを直接回転できます。</p>
 
                 <!-- リアルタイムサマリー表示領域 -->
                 <div id="rotateSummary" class="summary-container" style="display: none;">
@@ -976,7 +1102,7 @@ function cleanupFiles($dir) {
                 <input type="hidden" name="rotate" value="1">
                 <input type="file" name="pdfFileRotate" id="actualRotateFileInput" style="display: none;">
 
-                <button type="button" id="rotateSubmitBtn" onclick="submitRotateForm()" class="submit-button" style="display: none;">回転したPDFを保存</button>
+                <button type="button" id="rotateSubmitBtn" onclick="submitRotateForm()" class="submit-button" style="display: none;">回転したファイルを保存</button>
             </form>
         </div>
     </div>
@@ -992,34 +1118,94 @@ function cleanupFiles($dir) {
     <?php endif; ?>
 
     <script>
-        // 定数定義 (JS)
+        // ==========================================
+        // 定数・基本設定
+        // ==========================================
         const MAX_FILES = 100;
         const MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024; // 100MB
         const MAX_TOTAL_SIZE = 200 * 1024 * 1024;       // 200MB
+        const ALLOWED_MERGE_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'txt'];
 
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        // ==========================================
+        // タブ切り替え
+        // ==========================================
         function openTab(evt, tabName) {
             var i, tabcontent, tablinks;
-            
             tabcontent = document.getElementsByClassName("tabcontent");
             for (i = 0; i < tabcontent.length; i++) {
                 tabcontent[i].style.display = "none";
             }
-            
             tablinks = document.getElementsByClassName("tablinks");
             for (i = 0; i < tablinks.length; i++) {
                 tablinks[i].className = tablinks[i].className.replace(" active", "");
             }
-            
             document.getElementById(tabName).style.display = "block";
             evt.currentTarget.className += " active";
         }
-        
-        // ページ数を非同期で取得する関数
+
+        // ==========================================
+        // ユーティリティ関数
+        // ==========================================
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, function(m) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[m];
+            });
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function getFileExtension(filename) {
+            return filename.slice((filename.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase();
+        }
+
+        function getFileTypeInfo(ext) {
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                return { label: '画像', type: 'image' };
+            }
+            if (ext === 'txt') {
+                return { label: 'テキスト', type: 'text' };
+            }
+            return { label: 'PDF', type: 'pdf' };
+        }
+
+        function showClientError(containerId, messages) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            if (!messages || messages.length === 0) {
+                container.style.display = 'none';
+                container.innerHTML = '';
+                return;
+            }
+            let html = '<div class="error-title">⚠️ 入力エラー・上限エラー</div><ul>';
+            for (const msg of messages) {
+                html += '<li>' + escapeHtml(msg) + '</li>';
+            }
+            html += '</ul>';
+            container.innerHTML = html;
+            container.style.display = 'block';
+        }
+
+        // ページ数取得 (API)
         async function getPageCount(file) {
+            const ext = getFileExtension(file.name);
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                return 1;
+            }
+
             const formData = new FormData();
             formData.append('action', 'get_page_count');
             formData.append('pdfFile', file);
-            
+
             try {
                 const response = await fetch('', {
                     method: 'POST',
@@ -1037,10 +1223,10 @@ function cleanupFiles($dir) {
             return null;
         }
 
-        // ページ数解析の並行実行キュー（サーバー過負荷・レートリミット防止）
+        // ページ数解析キュー
         const pageCountQueue = [];
         let activePageCountWorkers = 0;
-        const MAX_CONCURRENT_PAGE_COUNT = 4; // 同時最大4並列で処理
+        const MAX_CONCURRENT_PAGE_COUNT = 4;
 
         function enqueuePageCount(file) {
             pageCountQueue.push(file);
@@ -1058,6 +1244,13 @@ function cleanupFiles($dir) {
             try {
                 const count = await getPageCount(file);
                 file.pageCount = count;
+                if (count && count > 0) {
+                    for (let p = 1; p <= count; p++) {
+                        if (file.rotations[p] === undefined) {
+                            file.rotations[p] = 0;
+                        }
+                    }
+                }
             } catch (e) {
                 file.pageCount = null;
             } finally {
@@ -1068,243 +1261,129 @@ function cleanupFiles($dir) {
             }
         }
 
-        // クライアントエラー表示用関数
-        function showClientError(containerId, messages) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-            if (!messages || messages.length === 0) {
-                container.style.display = 'none';
-                container.innerHTML = '';
-                return;
+        // PDFサムネイル描画ヘルパー
+        async function renderThumbnailToCanvas(pdfDoc, pageNo, canvas, targetWidth = 80) {
+            if (!pdfDoc || !canvas) return;
+            try {
+                const page = await pdfDoc.getPage(pageNo);
+                const baseViewport = page.getViewport({ scale: 1.0 });
+                const scale = targetWidth / baseViewport.width;
+                const viewport = page.getViewport({ scale: scale });
+                const context = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+            } catch (err) {
+                console.warn(`renderThumbnailToCanvas page ${pageNo} error:`, err);
             }
-            let html = '<div class="error-title">⚠️ 上限エラー・入力エラー</div><ul>';
-            for (const msg of messages) {
-                html += '<li>' + escapeHtml(msg) + '</li>';
-            }
-            html += '</ul>';
-            container.innerHTML = html;
-            container.style.display = 'block';
         }
 
-        function escapeHtml(str) {
-            return String(str).replace(/[&<>"']/g, function(m) {
-                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[m];
-            });
+        // ページ番号配列から範囲文字列（例: "1-3, 5, 7-9"）を生成
+        function formatPageNumbersToRange(pageNums) {
+            if (!pageNums || pageNums.length === 0) return '';
+            const sorted = Array.from(new Set(pageNums)).sort((a, b) => a - b);
+            const ranges = [];
+            let start = sorted[0];
+            let end = sorted[0];
+
+            for (let i = 1; i < sorted.length; i++) {
+                if (sorted[i] === end + 1) {
+                    end = sorted[i];
+                } else {
+                    ranges.push(start === end ? `${start}` : `${start}-${end}`);
+                    start = sorted[i];
+                    end = sorted[i];
+                }
+            }
+            ranges.push(start === end ? `${start}` : `${start}-${end}`);
+            return ranges.join(', ');
         }
 
-        // 単一ファイル（分割）選択時の処理
-        async function onSplitFileChange(input) {
-            const errorContainer = 'splitClientError';
-            showClientError(errorContainer, []);
-            
-            const submitBtn = document.getElementById('splitSubmitBtn');
-            const summaryDiv = document.getElementById('splitSummary');
-            const pageCountVal = document.getElementById('splitPageCount');
-            const fileSizeVal = document.getElementById('splitFileSize');
-            
-            displayFileNames('pdfFile', 'singleFileList');
-            
-            if (input.files && input.files[0]) {
-                const file = input.files[0];
-                
-                // 拡張子チェック
-                if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
-                    showClientError(errorContainer, ['PDFファイル以外の形式は選択できません。']);
-                    submitBtn.disabled = true;
-                    summaryDiv.style.display = 'none';
-                    return;
-                }
-                
-                // サイズチェック
-                if (file.size > MAX_SINGLE_FILE_SIZE) {
-                    showClientError(errorContainer, [
-                        `ファイル「${file.name}」のサイズ（${formatFileSize(file.size)}）が上限（100MB）を超えています。100MB以下のファイルを選択してください。`
-                    ]);
-                    submitBtn.disabled = true;
-                    summaryDiv.style.display = 'none';
-                    return;
-                }
-                
-                submitBtn.disabled = false;
-                summaryDiv.style.display = 'flex';
-                fileSizeVal.textContent = formatFileSize(file.size);
-                pageCountVal.textContent = '解析中...';
-                
-                const pageCount = await getPageCount(file);
-                if (pageCount !== null) {
-                    pageCountVal.textContent = pageCount + 'ページ';
-                    const fileItem = document.querySelector('#singleFileList .file-item');
-                    if (fileItem) {
-                        const pageBadge = document.createElement('span');
-                        pageBadge.className = 'file-page-count';
-                        pageBadge.textContent = pageCount + 'ページ';
-                        fileItem.insertBefore(pageBadge, fileItem.querySelector('.file-size'));
+        // 範囲文字列からページ番号配列をパース
+        function parsePageRange(rangeStr, maxPage) {
+            const pages = new Set();
+            if (!rangeStr) return [];
+            const parts = rangeStr.split(',');
+            for (let part of parts) {
+                part = part.trim();
+                if (part.includes('-')) {
+                    const rangeParts = part.split('-');
+                    const s = parseInt(rangeParts[0].trim(), 10);
+                    const e = parseInt(rangeParts[1].trim(), 10);
+                    if (!isNaN(s) && !isNaN(e) && s > 0 && e >= s) {
+                        for (let i = s; i <= Math.min(e, maxPage); i++) {
+                            pages.add(i);
+                        }
                     }
                 } else {
-                    pageCountVal.textContent = '解析不可';
-                }
-            } else {
-                summaryDiv.style.display = 'none';
-                submitBtn.disabled = false;
-            }
-        }
-
-        // 単一ファイル選択時にファイル名を表示する関数
-        function displayFileNames(inputId, listId) {
-            const input = document.getElementById(inputId);
-            const fileList = document.getElementById(listId);
-            fileList.innerHTML = '';
-            
-            if (input.files && input.files.length > 0) {
-                for (let i = 0; i < input.files.length; i++) {
-                    const file = input.files[i];
-                    const fileItem = document.createElement('div');
-                    fileItem.className = 'file-item';
-                    
-                    const fileName = document.createElement('span');
-                    fileName.className = 'file-name';
-                    fileName.textContent = file.name;
-                    
-                    const fileSize = document.createElement('span');
-                    fileSize.className = 'file-size';
-                    fileSize.textContent = formatFileSize(file.size);
-                    
-                    fileItem.appendChild(fileName);
-                    fileItem.appendChild(fileSize);
-                    fileList.appendChild(fileItem);
-                }
-            }
-        }
-        
-        // 結合用のファイル管理用配列
-        let mergeFiles = [];
-        
-        // ドラッグ＆ドロップ機能の初期化
-        document.addEventListener('DOMContentLoaded', function() {
-            const dropZone = document.getElementById('dropZone');
-            
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                }, false);
-            });
-            
-            ['dragenter', 'dragover'].forEach(eventName => {
-                dropZone.addEventListener(eventName, function() {
-                    dropZone.classList.add('drag-over');
-                }, false);
-            });
-            
-            ['dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, function() {
-                    dropZone.classList.remove('drag-over');
-                }, false);
-            });
-            
-            dropZone.addEventListener('drop', function(e) {
-                const dt = e.dataTransfer;
-                const files = dt.files;
-                addFiles(files);
-            }, false);
-
-            // PDF回転用ドロップゾーン
-            const rotateDropZone = document.getElementById('rotateDropZone');
-            if (rotateDropZone) {
-                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                    rotateDropZone.addEventListener(eventName, function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                    }, false);
-                });
-                
-                ['dragenter', 'dragover'].forEach(eventName => {
-                    rotateDropZone.addEventListener(eventName, function() {
-                        rotateDropZone.classList.add('drag-over');
-                    }, false);
-                });
-                
-                ['dragleave', 'drop'].forEach(eventName => {
-                    rotateDropZone.addEventListener(eventName, function() {
-                        rotateDropZone.classList.remove('drag-over');
-                    }, false);
-                });
-                
-                rotateDropZone.addEventListener('drop', function(e) {
-                    const dt = e.dataTransfer;
-                    if (dt.files && dt.files[0]) {
-                        setRotateFile(dt.files[0]);
+                    const num = parseInt(part, 10);
+                    if (!isNaN(num) && num > 0 && num <= maxPage) {
+                        pages.add(num);
                     }
-                }, false);
+                }
             }
-        });
-        
-        const ALLOWED_MERGE_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'txt'];
-
-        function getFileExtension(filename) {
-            return filename.slice((filename.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase();
+            return Array.from(pages).sort((a, b) => a - b);
         }
 
-        function getFileTypeInfo(ext) {
-            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-                return { label: '画像', type: 'image' };
-            }
-            if (ext === 'txt') {
-                return { label: 'テキスト', type: 'text' };
-            }
-            return { label: 'PDF', type: 'pdf' };
-        }
+        // ==========================================
+        // 結合タブ用スクリプト
+        // ==========================================
+        let mergeFiles = [];
 
-        // ファイルを追加する関数
         async function addFiles(files) {
             if (!files || files.length === 0) return;
-            
+
             const errorMessages = [];
-            let addedCount = 0;
-            
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
                 const ext = getFileExtension(file.name);
-                
-                // 拡張子チェック（PDF, 画像, テキスト）
+
                 if (!ALLOWED_MERGE_EXTS.includes(ext)) {
                     errorMessages.push(`ファイル「${file.name}」: 対応していない形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。`);
                     continue;
                 }
-                
-                // 単一ファイルサイズチェック（100MB）
+
                 if (file.size > MAX_SINGLE_FILE_SIZE) {
                     errorMessages.push(`ファイル「${file.name}」: サイズ（${formatFileSize(file.size)}）が上限（100MB）を超えているため除外しました。`);
                     continue;
                 }
-                
-                // 画像ファイルは1ページ固定
+
+                // カスタムプロパティの初期化
+                file.uid = 'mf_' + Math.random().toString(36).substr(2, 9);
+                file.rotations = {};
+                file.isExpanded = (mergeFiles.length < 3); // 最初の数個は自動で展開表示
+                file.pdfDoc = null;
+                file.previewUrl = null;
+
                 if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
                     file.pageCount = 1;
+                    file.rotations[1] = 0;
+                    file.previewUrl = URL.createObjectURL(file);
+                } else if (ext === 'txt') {
+                    file.pageCount = null;
+                    file.rotations[1] = 0;
+                    enqueuePageCount(file);
                 } else {
                     file.pageCount = null;
                     enqueuePageCount(file);
                 }
 
                 mergeFiles.push(file);
-                addedCount++;
             }
-            
-            // input[type=file]をクリアして同じファイルを再度選択可能にする
+
             const fileInput = document.getElementById('pdfFileAdd');
             if (fileInput) fileInput.value = '';
-            
+
             if (mergeFiles.length > MAX_FILES) {
                 const excess = mergeFiles.length - MAX_FILES;
                 errorMessages.push(`選択されたファイル数（${mergeFiles.length}個）が上限（${MAX_FILES}個）を超えています。${excess}個のファイルを削除して${MAX_FILES}個以下にしてください。`);
             }
-            
+
             showClientError('mergeClientError', errorMessages);
             updateFileList();
             updateMergeSummary();
         }
-        
-        // 結合の集計表示を更新する関数
+
         function updateMergeSummary() {
             const summaryDiv = document.getElementById('mergeSummary');
             const fileCountVal = document.getElementById('mergeFileCount');
@@ -1312,14 +1391,14 @@ function cleanupFiles($dir) {
             const totalSizeVal = document.getElementById('mergeTotalSize');
             const warningText = document.getElementById('mergeWarningText');
             const submitBtn = document.getElementById('mergeSubmitBtn');
-            
+
             if (mergeFiles.length > 0) {
                 summaryDiv.style.display = 'flex';
-                
+
                 let totalPages = 0;
                 let totalBytes = 0;
                 let loading = false;
-                
+
                 for (let file of mergeFiles) {
                     totalBytes += file.size;
                     if (file.pageCount === null) {
@@ -1328,13 +1407,12 @@ function cleanupFiles($dir) {
                         totalPages += file.pageCount;
                     }
                 }
-                
+
                 pageCountVal.textContent = loading ? '解析中...' : totalPages + 'ページ';
-                
-                // 上限チェック
+
                 let warnings = [];
                 let isExceeded = false;
-                
+
                 if (mergeFiles.length > MAX_FILES) {
                     const excess = mergeFiles.length - MAX_FILES;
                     fileCountVal.innerHTML = `${mergeFiles.length} / ${MAX_FILES}個 <span class="excess-badge">${excess}個超過</span>`;
@@ -1343,7 +1421,7 @@ function cleanupFiles($dir) {
                 } else {
                     fileCountVal.textContent = `${mergeFiles.length} / ${MAX_FILES}個`;
                 }
-                
+
                 if (totalBytes > MAX_TOTAL_SIZE) {
                     totalSizeVal.innerHTML = `${formatFileSize(totalBytes)} / 200MB <span class="excess-badge">容量超過</span>`;
                     warnings.push(`⚠️ 合計サイズ（${formatFileSize(totalBytes)}）が上限（200MB）を超えています。ファイル数を減らすかサイズを小さくしてください。`);
@@ -1351,9 +1429,9 @@ function cleanupFiles($dir) {
                 } else {
                     totalSizeVal.textContent = `${formatFileSize(totalBytes)} / 200MB`;
                 }
-                
+
                 const isSingleConvert = (mergeFiles.length === 1 && getFileTypeInfo(getFileExtension(mergeFiles[0].name)).type !== 'pdf');
-                const defaultBtnText = isSingleConvert ? 'PDFに変換' : 'PDFを結合';
+                const defaultBtnText = isSingleConvert ? 'PDFに変換・保存' : 'PDFを結合';
 
                 if (isExceeded) {
                     summaryDiv.classList.add('limit-exceeded');
@@ -1367,12 +1445,6 @@ function cleanupFiles($dir) {
                     warningText.style.display = 'none';
                     submitBtn.disabled = false;
                     submitBtn.textContent = defaultBtnText;
-                    
-                    // ファイル数が上限以内になったら、ファイル数超過のエラー表示もクリア
-                    const clientError = document.getElementById('mergeClientError');
-                    if (clientError && clientError.textContent.includes('ファイル数')) {
-                        showClientError('mergeClientError', []);
-                    }
                 }
             } else {
                 summaryDiv.style.display = 'none';
@@ -1382,11 +1454,10 @@ function cleanupFiles($dir) {
             }
         }
 
-        // ファイルリストを更新する関数
         function updateFileList() {
             const fileList = document.getElementById('fileList');
             fileList.innerHTML = '';
-            
+
             if (mergeFiles.length > 0) {
                 for (let i = 0; i < mergeFiles.length; i++) {
                     const file = mergeFiles[i];
@@ -1396,32 +1467,47 @@ function cleanupFiles($dir) {
                     const fileItem = document.createElement('div');
                     fileItem.className = 'file-item';
                     fileItem.dataset.index = i;
-                    
+
+                    // 1. ヘッダー行
+                    const header = document.createElement('div');
+                    header.className = 'file-item-header';
+
                     const handle = document.createElement('span');
                     handle.className = 'handle';
                     handle.innerHTML = '&#8597;';
-                    fileItem.appendChild(handle);
-                    
+                    header.appendChild(handle);
+
                     const typeBadge = document.createElement('span');
                     typeBadge.className = `file-type-badge type-${typeInfo.type}`;
                     typeBadge.textContent = typeInfo.label;
-                    fileItem.appendChild(typeBadge);
+                    header.appendChild(typeBadge);
 
                     const fileName = document.createElement('span');
                     fileName.className = 'file-name';
                     fileName.textContent = file.name;
-                    fileItem.appendChild(fileName);
-                    
+                    header.appendChild(fileName);
+
                     const pageBadge = document.createElement('span');
                     pageBadge.className = 'file-page-count';
                     pageBadge.textContent = file.pageCount !== null ? file.pageCount + 'ページ' : '解析中...';
-                    fileItem.appendChild(pageBadge);
-                    
+                    header.appendChild(pageBadge);
+
                     const fileSize = document.createElement('span');
                     fileSize.className = 'file-size';
                     fileSize.textContent = formatFileSize(file.size);
-                    fileItem.appendChild(fileSize);
-                    
+                    header.appendChild(fileSize);
+
+                    // プレビュー・回転トグルボタン
+                    const rotateBtn = document.createElement('button');
+                    rotateBtn.type = 'button';
+                    rotateBtn.className = `rotate-toggle-btn ${file.isExpanded ? 'active' : ''}`;
+                    rotateBtn.innerHTML = `🔄 回転・プレビュー ${file.isExpanded ? '▲' : '▼'}`;
+                    rotateBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        toggleFilePages(i);
+                    };
+                    header.appendChild(rotateBtn);
+
                     const removeBtn = document.createElement('span');
                     removeBtn.className = 'remove';
                     removeBtn.textContent = '\u00D7';
@@ -1429,66 +1515,214 @@ function cleanupFiles($dir) {
                         e.stopPropagation();
                         removeFile(i);
                     };
-                    fileItem.appendChild(removeBtn);
-                    
+                    header.appendChild(removeBtn);
+
+                    fileItem.appendChild(header);
+
+                    // 2. プレビュー・回転セクション（展開時）
+                    if (file.isExpanded) {
+                        const pagesSection = document.createElement('div');
+                        pagesSection.className = 'file-item-pages';
+
+                        // ツールバー
+                        const toolbar = document.createElement('div');
+                        toolbar.className = 'file-pages-toolbar';
+
+                        const tbTitle = document.createElement('span');
+                        tbTitle.className = 'toolbar-title';
+                        tbTitle.textContent = file.pageCount !== null ? `各ページ回転（全${file.pageCount}ページ）` : 'ページ解析中...';
+                        toolbar.appendChild(tbTitle);
+
+                        const tbActions = document.createElement('div');
+                        tbActions.className = 'toolbar-actions';
+                        tbActions.innerHTML = `
+                            <button type="button" class="mini-tool-btn" onclick="rotateFileAllPages(${i}, 90)">全ページ ↻ 90°</button>
+                            <button type="button" class="mini-tool-btn" onclick="rotateFileAllPages(${i}, -90)">全ページ ↺ 90°</button>
+                            <button type="button" class="mini-tool-btn reset" onclick="resetFileRotations(${i})">リセット</button>
+                        `;
+                        toolbar.appendChild(tbActions);
+                        pagesSection.appendChild(toolbar);
+
+                        // サムネイルコンテナ
+                        const container = document.createElement('div');
+                        container.className = 'mini-pages-container';
+                        container.id = `mcontainer_${file.uid}`;
+
+                        const pageCount = file.pageCount || 1;
+                        for (let p = 1; p <= pageCount; p++) {
+                            const angle = file.rotations[p] || 0;
+                            const card = document.createElement('div');
+                            card.className = `mini-page-card ${angle !== 0 ? 'is-rotated' : ''}`;
+                            card.id = `mcard_${file.uid}_${p}`;
+
+                            card.innerHTML = `
+                                <div class="card-top">
+                                    <span class="page-num">P.${p}</span>
+                                    <span class="mini-angle-badge ${angle !== 0 ? 'rotated' : ''}" id="mbadge_${file.uid}_${p}">${angle}°</span>
+                                </div>
+                                <div class="mini-thumb-wrap" onclick="rotateFilePage(${i}, ${p}, 90)" title="クリックで右に90度回転">
+                                    <div class="canvas-holder" id="mholder_${file.uid}_${p}" style="transform: rotate(${angle}deg);">
+                                        ${ext === 'txt' 
+                                            ? '<div class="text-thumb-icon">📄<span>TXT</span></div>'
+                                            : (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+                                                ? `<img src="${file.previewUrl || ''}" alt="P.${p}">`
+                                                : `<canvas id="mcanvas_${file.uid}_${p}"></canvas>`
+                                            )
+                                        }
+                                    </div>
+                                </div>
+                                <div class="card-actions">
+                                    <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, -90)" title="左90°回転">↺</button>
+                                    <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, 90)" title="右90°回転">↻</button>
+                                </div>
+                            `;
+                            container.appendChild(card);
+                        }
+
+                        pagesSection.appendChild(container);
+                        fileItem.appendChild(pagesSection);
+
+                        // PDFサムネイル非同期描画
+                        if (ext === 'pdf' && window.pdfjsLib) {
+                            renderFilePdfThumbnails(file, i);
+                        }
+                    }
+
                     fileList.appendChild(fileItem);
                 }
-                
+
                 initSortable();
             }
         }
-        
-        // ファイルを削除する関数
+
+        async function renderFilePdfThumbnails(file, index) {
+            try {
+                if (!file.pdfDoc) {
+                    const arrayBuffer = await file.arrayBuffer();
+                    file.pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    if (!file.pageCount) {
+                        file.pageCount = file.pdfDoc.numPages;
+                    }
+                }
+
+                const pageCount = file.pageCount || file.pdfDoc.numPages;
+                for (let p = 1; p <= pageCount; p++) {
+                    const canvas = document.getElementById(`mcanvas_${file.uid}_${p}`);
+                    if (canvas && !canvas.dataset.rendered) {
+                        canvas.dataset.rendered = 'true';
+                        renderThumbnailToCanvas(file.pdfDoc, p, canvas, 74);
+                    }
+                }
+            } catch (err) {
+                console.warn(`renderFilePdfThumbnails failed for ${file.name}:`, err);
+            }
+        }
+
+        function toggleFilePages(index) {
+            if (mergeFiles[index]) {
+                mergeFiles[index].isExpanded = !mergeFiles[index].isExpanded;
+                updateFileList();
+            }
+        }
+
+        function rotateFilePage(fileIndex, pageNo, delta) {
+            const file = mergeFiles[fileIndex];
+            if (!file) return;
+
+            const current = file.rotations[pageNo] || 0;
+            const next = ((current + delta) % 360 + 360) % 360;
+            file.rotations[pageNo] = next;
+
+            // DOMを即座に更新
+            const holder = document.getElementById(`mholder_${file.uid}_${pageNo}`);
+            const badge = document.getElementById(`mbadge_${file.uid}_${pageNo}`);
+            const card = document.getElementById(`mcard_${file.uid}_${pageNo}`);
+
+            if (holder) holder.style.transform = `rotate(${next}deg)`;
+            if (badge) {
+                badge.textContent = `${next}°`;
+                if (next !== 0) badge.classList.add('rotated');
+                else badge.classList.remove('rotated');
+            }
+            if (card) {
+                if (next !== 0) card.classList.add('is-rotated');
+                else card.classList.remove('is-rotated');
+            }
+        }
+
+        function rotateFileAllPages(fileIndex, delta) {
+            const file = mergeFiles[fileIndex];
+            if (!file) return;
+            const pageCount = file.pageCount || 1;
+            for (let p = 1; p <= pageCount; p++) {
+                rotateFilePage(fileIndex, p, delta);
+            }
+        }
+
+        function resetFileRotations(fileIndex) {
+            const file = mergeFiles[fileIndex];
+            if (!file) return;
+            const pageCount = file.pageCount || 1;
+            for (let p = 1; p <= pageCount; p++) {
+                const current = file.rotations[p] || 0;
+                rotateFilePage(fileIndex, p, -current);
+            }
+        }
+
         function removeFile(index) {
             mergeFiles.splice(index, 1);
             updateFileList();
             updateMergeSummary();
         }
-        
-        // ソータブルを初期化する関数
+
         function initSortable() {
             const fileList = document.getElementById('fileList');
             let draggedItem = null;
-            
+
             const items = fileList.querySelectorAll('.file-item');
             items.forEach(item => {
                 item.draggable = true;
-                
-                item.addEventListener('dragstart', function() {
+
+                item.addEventListener('dragstart', function(e) {
+                    // 入力欄やボタンのドラッグは防止
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') {
+                        e.preventDefault();
+                        return;
+                    }
                     draggedItem = this;
                     setTimeout(() => this.classList.add('dragging'), 0);
                 });
-                
+
                 item.addEventListener('dragend', function() {
                     draggedItem = null;
                     this.classList.remove('dragging');
                 });
-                
+
                 item.addEventListener('dragover', function(e) {
                     e.preventDefault();
                 });
-                
+
                 item.addEventListener('dragenter', function(e) {
                     e.preventDefault();
                     if (this !== draggedItem) {
                         this.classList.add('drag-over');
                     }
                 });
-                
+
                 item.addEventListener('dragleave', function() {
                     this.classList.remove('drag-over');
                 });
-                
+
                 item.addEventListener('drop', function(e) {
                     e.preventDefault();
                     if (this !== draggedItem) {
-                        const draggedIndex = parseInt(draggedItem.dataset.index);
-                        const targetIndex = parseInt(this.dataset.index);
-                        
+                        const draggedIndex = parseInt(draggedItem.dataset.index, 10);
+                        const targetIndex = parseInt(this.dataset.index, 10);
+
                         const temp = mergeFiles[draggedIndex];
                         mergeFiles[draggedIndex] = mergeFiles[targetIndex];
                         mergeFiles[targetIndex] = temp;
-                        
+
                         updateFileList();
                         updateMergeSummary();
                     }
@@ -1496,19 +1730,18 @@ function cleanupFiles($dir) {
                 });
             });
         }
-        
-        // フォーム送信時にファイルを追加して送信する
+
         function submitMergeForm() {
             const errors = [];
-            
+
             if (mergeFiles.length === 0) {
-                errors.push('結合するPDFファイルを少なくとも1つ選択してください。');
+                errors.push('結合・変換するファイルを少なくとも1つ選択してください。');
             }
-            
+
             if (mergeFiles.length > MAX_FILES) {
                 errors.push(`一度に結合できるファイル数は最大${MAX_FILES}個までです。（現在: ${mergeFiles.length}個）`);
             }
-            
+
             let totalBytes = 0;
             for (let f of mergeFiles) {
                 if (f.size > MAX_SINGLE_FILE_SIZE) {
@@ -1516,77 +1749,394 @@ function cleanupFiles($dir) {
                 }
                 totalBytes += f.size;
             }
-            
+
             if (totalBytes > MAX_TOTAL_SIZE) {
                 errors.push(`選択されたファイルの合計サイズ（${formatFileSize(totalBytes)}）が上限（200MB）を超えています。ファイル数を減らしてください。`);
             }
-            
+
             if (errors.length > 0) {
                 showClientError('mergeClientError', errors);
                 return;
             }
-            
+
             showClientError('mergeClientError', []);
-            
+
+            // 各ファイルの回転情報をJSON文字列としてhidden inputに格納
+            const fileRotationsArray = mergeFiles.map(f => f.rotations || {});
+            document.getElementById('fileRotationsInput').value = JSON.stringify(fileRotationsArray);
+
             const form = document.getElementById('mergeForm');
             const container = document.getElementById('fileInputsContainer');
             container.innerHTML = '';
-            
-            // ファイルをFormDataに追加
+
             for (let i = 0; i < mergeFiles.length; i++) {
                 const input = document.createElement('input');
                 input.type = 'file';
                 input.name = 'pdfFiles[]';
                 input.style.display = 'none';
-                
+
                 const dataTransfer = new DataTransfer();
                 dataTransfer.items.add(mergeFiles[i]);
                 input.files = dataTransfer.files;
-                
+
                 container.appendChild(input);
             }
-            
-            // 結合ボタンフラグと送信予定ファイル数を追加
+
             const mergeButton = document.createElement('input');
             mergeButton.type = 'hidden';
             mergeButton.name = 'merge';
             mergeButton.value = '1';
             container.appendChild(mergeButton);
-            
+
             const countInput = document.createElement('input');
             countInput.type = 'hidden';
             countInput.name = 'expected_count';
             countInput.value = mergeFiles.length;
             container.appendChild(countInput);
-            
-            // 送信ボタンの二重送信防止
+
             const submitBtn = document.getElementById('mergeSubmitBtn');
             submitBtn.disabled = true;
-            submitBtn.textContent = '結合処理中...';
-            
+            submitBtn.textContent = '結合・変換処理中...';
+
             form.submit();
-        }
-        
-        // ファイルサイズを読みやすい形式に変換する関数
-        function formatFileSize(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
         // ==========================================
-        // PDF回転機能用スクリプト
+        // 分割タブ用スクリプト（プレビュー＆ページ回転対応）
+        // ==========================================
+        let splitFile = null;
+        let splitPdfDoc = null;
+        let splitPageCount = 0;
+        let splitRotations = {};       // { 1: 0, 2: 90, ... }
+        let splitSelectedPages = new Set(); // 選択されたページ番号のSet
+
+        async function onSplitFileChange(input) {
+            const errorContainer = 'splitClientError';
+            showClientError(errorContainer, []);
+
+            const submitBtn = document.getElementById('splitSubmitBtn');
+            const summaryDiv = document.getElementById('splitSummary');
+            const pageCountVal = document.getElementById('splitPageCount');
+            const selectedCountVal = document.getElementById('splitSelectedCount');
+            const fileSizeVal = document.getElementById('splitFileSize');
+            const previewSection = document.getElementById('splitPreviewSection');
+
+            displayFileNames('pdfFile', 'singleFileList');
+
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                const ext = getFileExtension(file.name);
+
+                if (!ALLOWED_MERGE_EXTS.includes(ext)) {
+                    showClientError(errorContainer, ['対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。']);
+                    submitBtn.disabled = true;
+                    summaryDiv.style.display = 'none';
+                    previewSection.style.display = 'none';
+                    return;
+                }
+
+                if (file.size > MAX_SINGLE_FILE_SIZE) {
+                    showClientError(errorContainer, [
+                        `ファイル「${file.name}」のサイズ（${formatFileSize(file.size)}）が上限（100MB）を超えています。100MB以下のファイルを選択してください。`
+                    ]);
+                    submitBtn.disabled = true;
+                    summaryDiv.style.display = 'none';
+                    previewSection.style.display = 'none';
+                    return;
+                }
+
+                splitFile = file;
+                splitRotations = {};
+                splitSelectedPages = new Set();
+                submitBtn.disabled = false;
+                summaryDiv.style.display = 'flex';
+                fileSizeVal.textContent = formatFileSize(file.size);
+                pageCountVal.textContent = '解析中...';
+                selectedCountVal.textContent = '-';
+
+                try {
+                    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                        splitPageCount = 1;
+                        splitPdfDoc = null;
+                        splitRotations[1] = 0;
+                        splitSelectedPages.add(1);
+                    } else if (ext === 'txt') {
+                        splitPageCount = await getPageCount(file) || 1;
+                        splitPdfDoc = null;
+                        for (let i = 1; i <= splitPageCount; i++) {
+                            splitRotations[i] = 0;
+                            splitSelectedPages.add(i);
+                        }
+                    } else {
+                        // PDF
+                        const arrayBuffer = await file.arrayBuffer();
+                        if (window.pdfjsLib) {
+                            splitPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                            splitPageCount = splitPdfDoc.numPages;
+                        } else {
+                            splitPageCount = await getPageCount(file) || 0;
+                        }
+                        for (let i = 1; i <= splitPageCount; i++) {
+                            splitRotations[i] = 0;
+                            splitSelectedPages.add(i);
+                        }
+                    }
+
+                    pageCountVal.textContent = splitPageCount + 'ページ';
+                    selectedCountVal.textContent = splitSelectedPages.size + 'ページ';
+
+                    // ページ指定入力欄の同期
+                    updateSplitPagesInputFromSelection();
+
+                    // グリッド描画
+                    previewSection.style.display = 'block';
+                    renderSplitPagesGrid();
+
+                } catch (err) {
+                    console.error('Error loading file for split:', err);
+                    showClientError(errorContainer, ['ファイルの解析に失敗しました: ' + (err.message || '不明なエラー')]);
+                }
+            } else {
+                summaryDiv.style.display = 'none';
+                previewSection.style.display = 'none';
+                submitBtn.disabled = false;
+            }
+        }
+
+        function renderSplitPagesGrid() {
+            const grid = document.getElementById('splitPagesGrid');
+            if (!grid) return;
+            grid.innerHTML = '';
+
+            const ext = splitFile ? getFileExtension(splitFile.name) : 'pdf';
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+            const isText = (ext === 'txt');
+            const imgUrl = isImage ? URL.createObjectURL(splitFile) : '';
+
+            for (let pageNo = 1; pageNo <= splitPageCount; pageNo++) {
+                const isSelected = splitSelectedPages.has(pageNo);
+                const angle = splitRotations[pageNo] || 0;
+
+                const card = document.createElement('div');
+                card.className = `split-page-card ${isSelected ? 'is-selected' : ''} ${angle !== 0 ? 'is-rotated' : ''}`;
+                card.id = `splitCard_${pageNo}`;
+
+                card.innerHTML = `
+                    <div class="card-header-row">
+                        <label class="page-check-label" onclick="event.stopPropagation();">
+                            <input type="checkbox" id="splitCheck_${pageNo}" ${isSelected ? 'checked' : ''} onchange="toggleSplitPageSelection(${pageNo}, this.checked)">
+                            P.${pageNo}
+                        </label>
+                        <span class="angle-badge ${angle !== 0 ? 'rotated' : ''}" id="splitAngleBadge_${pageNo}">${angle}°</span>
+                    </div>
+                    <div class="split-thumb-wrap" onclick="rotateSplitPage(${pageNo}, 90)" title="クリックで右に90度回転">
+                        <div class="canvas-wrap" id="splitCanvasWrap_${pageNo}" style="transform: rotate(${angle}deg);">
+                            ${isText
+                                ? '<div class="text-thumb-icon">📄<span>TXT</span></div>'
+                                : (isImage
+                                    ? `<img src="${imgUrl}" alt="P.${pageNo}">`
+                                    : `<canvas id="splitCanvas_${pageNo}"></canvas>`
+                                )
+                            }
+                        </div>
+                    </div>
+                    <div class="card-actions-row">
+                        <button type="button" class="split-rot-btn" onclick="rotateSplitPage(${pageNo}, -90)" title="左90°回転">↺ 90°</button>
+                        <button type="button" class="split-rot-btn" onclick="rotateSplitPage(${pageNo}, 90)" title="右90°回転">↻ 90°</button>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+
+                if (!isImage && !isText && splitPdfDoc) {
+                    const canvas = document.getElementById(`splitCanvas_${pageNo}`);
+                    if (canvas) {
+                        renderThumbnailToCanvas(splitPdfDoc, pageNo, canvas, 92);
+                    }
+                }
+            }
+        }
+
+        function toggleSplitPageSelection(pageNo, isChecked) {
+            if (isChecked === undefined) {
+                if (splitSelectedPages.has(pageNo)) {
+                    splitSelectedPages.delete(pageNo);
+                } else {
+                    splitSelectedPages.add(pageNo);
+                }
+            } else {
+                if (isChecked) {
+                    splitSelectedPages.add(pageNo);
+                } else {
+                    splitSelectedPages.delete(pageNo);
+                }
+            }
+
+            const card = document.getElementById(`splitCard_${pageNo}`);
+            const check = document.getElementById(`splitCheck_${pageNo}`);
+            const nowSelected = splitSelectedPages.has(pageNo);
+
+            if (card) {
+                if (nowSelected) card.classList.add('is-selected');
+                else card.classList.remove('is-selected');
+            }
+            if (check) {
+                check.checked = nowSelected;
+            }
+
+            updateSplitPagesInputFromSelection();
+            updateSplitSelectedCountUI();
+        }
+
+        function rotateSplitPage(pageNo, delta) {
+            const current = splitRotations[pageNo] || 0;
+            const next = ((current + delta) % 360 + 360) % 360;
+            splitRotations[pageNo] = next;
+
+            const wrap = document.getElementById(`splitCanvasWrap_${pageNo}`);
+            const badge = document.getElementById(`splitAngleBadge_${pageNo}`);
+            const card = document.getElementById(`splitCard_${pageNo}`);
+
+            if (wrap) wrap.style.transform = `rotate(${next}deg)`;
+            if (badge) {
+                badge.textContent = `${next}°`;
+                if (next !== 0) badge.classList.add('rotated');
+                else badge.classList.remove('rotated');
+            }
+            if (card) {
+                if (next !== 0) card.classList.add('is-rotated');
+                else card.classList.remove('is-rotated');
+            }
+        }
+
+        function rotateAllSplitPages(delta) {
+            for (let p = 1; p <= splitPageCount; p++) {
+                rotateSplitPage(p, delta);
+            }
+        }
+
+        function resetAllSplitRotations() {
+            for (let p = 1; p <= splitPageCount; p++) {
+                const current = splitRotations[p] || 0;
+                rotateSplitPage(p, -current);
+            }
+        }
+
+        function selectAllSplitPages(selectAll) {
+            splitSelectedPages.clear();
+            if (selectAll) {
+                for (let p = 1; p <= splitPageCount; p++) {
+                    splitSelectedPages.add(p);
+                }
+            }
+
+            for (let p = 1; p <= splitPageCount; p++) {
+                const card = document.getElementById(`splitCard_${p}`);
+                const check = document.getElementById(`splitCheck_${p}`);
+                if (card) {
+                    if (selectAll) card.classList.add('is-selected');
+                    else card.classList.remove('is-selected');
+                }
+                if (check) check.checked = selectAll;
+            }
+
+            updateSplitPagesInputFromSelection();
+            updateSplitSelectedCountUI();
+        }
+
+        function updateSplitPagesInputFromSelection() {
+            const pagesInput = document.getElementById('pages');
+            if (!pagesInput) return;
+            if (splitSelectedPages.size === splitPageCount) {
+                pagesInput.value = ''; // 全ページの場合は空欄でOK
+            } else {
+                pagesInput.value = formatPageNumbersToRange(Array.from(splitSelectedPages));
+            }
+        }
+
+        function onSplitPagesTextInput(val) {
+            if (!val || val.trim() === '') {
+                // 空欄 = 全ページ選択
+                for (let p = 1; p <= splitPageCount; p++) {
+                    splitSelectedPages.add(p);
+                }
+            } else {
+                const parsed = parsePageRange(val, splitPageCount);
+                splitSelectedPages = new Set(parsed);
+            }
+
+            for (let p = 1; p <= splitPageCount; p++) {
+                const isSel = splitSelectedPages.has(p);
+                const card = document.getElementById(`splitCard_${p}`);
+                const check = document.getElementById(`splitCheck_${p}`);
+                if (card) {
+                    if (isSel) card.classList.add('is-selected');
+                    else card.classList.remove('is-selected');
+                }
+                if (check) check.checked = isSel;
+            }
+
+            updateSplitSelectedCountUI();
+        }
+
+        function updateSplitSelectedCountUI() {
+            const countVal = document.getElementById('splitSelectedCount');
+            if (countVal) {
+                countVal.textContent = splitSelectedPages.size + 'ページ';
+            }
+        }
+
+        // 分割フォーム送信前フック
+        document.getElementById('splitForm')?.addEventListener('submit', function(e) {
+            if (splitPageCount > 0 && splitSelectedPages.size === 0) {
+                e.preventDefault();
+                showClientError('splitClientError', ['抽出するページを少なくとも1つ選択してください。']);
+                return;
+            }
+            // 回転情報をJSONセット
+            document.getElementById('splitRotationsInput').value = JSON.stringify(splitRotations);
+            const submitBtn = document.getElementById('splitSubmitBtn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = '分割・抽出処理中...';
+            }
+        });
+
+        // 単一ファイル選択表示
+        function displayFileNames(inputId, listId) {
+            const input = document.getElementById(inputId);
+            const fileList = document.getElementById(listId);
+            if (!fileList) return;
+            fileList.innerHTML = '';
+
+            if (input && input.files && input.files.length > 0) {
+                for (let i = 0; i < input.files.length; i++) {
+                    const file = input.files[i];
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item';
+
+                    const fileName = document.createElement('span');
+                    fileName.className = 'file-name';
+                    fileName.textContent = file.name;
+
+                    const fileSize = document.createElement('span');
+                    fileSize.className = 'file-size';
+                    fileSize.textContent = formatFileSize(file.size);
+
+                    fileItem.appendChild(fileName);
+                    fileItem.appendChild(fileSize);
+                    fileList.appendChild(fileItem);
+                }
+            }
+        }
+
+        // ==========================================
+        // PDF回転タブ用スクリプト（画像・テキストにも対応）
         // ==========================================
         let rotateFile = null;
         let rotatePdfDoc = null;
         let rotatePageCount = 0;
-        let pageRotations = {}; // { 1: 0, 2: 90, ... }
-
-        if (window.pdfjsLib) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        }
+        let pageRotations = {};
 
         async function onRotateFileChange(input) {
             if (input.files && input.files[0]) {
@@ -1598,13 +2148,12 @@ function cleanupFiles($dir) {
             const errorContainer = 'rotateClientError';
             showClientError(errorContainer, []);
 
-            // 拡張子チェック
-            if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
-                showClientError(errorContainer, ['PDFファイル以外の形式は選択できません。']);
+            const ext = getFileExtension(file.name);
+            if (!ALLOWED_MERGE_EXTS.includes(ext)) {
+                showClientError(errorContainer, ['対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。']);
                 return;
             }
 
-            // サイズチェック（100MB）
             if (file.size > MAX_SINGLE_FILE_SIZE) {
                 showClientError(errorContainer, [
                     `ファイル「${file.name}」のサイズ（${formatFileSize(file.size)}）が上限（100MB）を超えています。100MB以下のファイルを選択してください。`
@@ -1635,20 +2184,26 @@ function cleanupFiles($dir) {
             document.getElementById('rotateTargetCount').textContent = '0 / -';
 
             try {
-                const arrayBuffer = await file.arrayBuffer();
-                if (window.pdfjsLib) {
-                    rotatePdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                    rotatePageCount = rotatePdfDoc.numPages;
+                if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                    rotatePageCount = 1;
+                    rotatePdfDoc = null;
+                    pageRotations[1] = 0;
+                } else if (ext === 'txt') {
+                    rotatePageCount = await getPageCount(file) || 1;
+                    rotatePdfDoc = null;
+                    for (let i = 1; i <= rotatePageCount; i++) pageRotations[i] = 0;
                 } else {
-                    rotatePageCount = await getPageCount(file) || 0;
+                    const arrayBuffer = await file.arrayBuffer();
+                    if (window.pdfjsLib) {
+                        rotatePdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                        rotatePageCount = rotatePdfDoc.numPages;
+                    } else {
+                        rotatePageCount = await getPageCount(file) || 0;
+                    }
+                    for (let i = 1; i <= rotatePageCount; i++) pageRotations[i] = 0;
                 }
 
                 document.getElementById('rotatePageCount').textContent = rotatePageCount + 'ページ';
-
-                for (let i = 1; i <= rotatePageCount; i++) {
-                    pageRotations[i] = 0;
-                }
-
                 updateRotateSummaryCounts();
 
                 document.getElementById('rotateToolbar').style.display = 'block';
@@ -1657,8 +2212,8 @@ function cleanupFiles($dir) {
 
                 renderRotateGrid();
             } catch (err) {
-                console.error('Error loading PDF for rotate:', err);
-                showClientError(errorContainer, ['PDFファイルの解析に失敗しました: ' + (err.message || '不明なエラー')]);
+                console.error('Error loading file for rotate:', err);
+                showClientError(errorContainer, ['ファイルの解析に失敗しました: ' + (err.message || '不明なエラー')]);
             }
         }
 
@@ -1688,6 +2243,11 @@ function cleanupFiles($dir) {
             const grid = document.getElementById('rotatePagesGrid');
             grid.innerHTML = '';
 
+            const ext = rotateFile ? getFileExtension(rotateFile.name) : 'pdf';
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+            const isText = (ext === 'txt');
+            const imgUrl = isImage ? URL.createObjectURL(rotateFile) : '';
+
             for (let pageNo = 1; pageNo <= rotatePageCount; pageNo++) {
                 const card = document.createElement('div');
                 card.className = 'rotate-page-card';
@@ -1700,7 +2260,13 @@ function cleanupFiles($dir) {
                     </div>
                     <div class="thumb-container" onclick="rotatePage(${pageNo}, 90)" title="クリックで時計回りに90度回転">
                         <div class="canvas-wrap" id="canvasWrap_${pageNo}">
-                            <canvas id="thumbCanvas_${pageNo}"></canvas>
+                            ${isText
+                                ? '<div class="text-thumb-icon" style="font-size: 32px; color: #64748b;">📄<div style="font-size: 11px; font-weight: bold;">TXT</div></div>'
+                                : (isImage
+                                    ? `<img src="${imgUrl}" alt="P.${pageNo}" style="max-width: 130px; max-height: 170px; object-fit: contain;">`
+                                    : `<canvas id="thumbCanvas_${pageNo}"></canvas>`
+                                )
+                            }
                         </div>
                     </div>
                     <div class="card-actions">
@@ -1711,7 +2277,7 @@ function cleanupFiles($dir) {
                 `;
                 grid.appendChild(card);
 
-                if (rotatePdfDoc) {
+                if (!isImage && !isText && rotatePdfDoc) {
                     renderPageThumbnail(pageNo);
                 }
             }
@@ -1719,24 +2285,9 @@ function cleanupFiles($dir) {
 
         async function renderPageThumbnail(pageNo) {
             try {
-                const page = await rotatePdfDoc.getPage(pageNo);
-                const baseViewport = page.getViewport({ scale: 1.0 });
-                const targetWidth = 140;
-                const scale = targetWidth / baseViewport.width;
-                const viewport = page.getViewport({ scale: scale });
-
                 const canvas = document.getElementById(`thumbCanvas_${pageNo}`);
-                if (!canvas) return;
-
-                const context = canvas.getContext('2d');
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-
-                const renderContext = {
-                    canvasContext: context,
-                    viewport: viewport
-                };
-                await page.render(renderContext).promise;
+                if (!canvas || !rotatePdfDoc) return;
+                await renderThumbnailToCanvas(rotatePdfDoc, pageNo, canvas, 140);
             } catch (err) {
                 console.warn(`Thumbnail render failed for page ${pageNo}:`, err);
             }
@@ -1760,25 +2311,15 @@ function cleanupFiles($dir) {
             const badge = document.getElementById(`angleBadge_${pageNo}`);
             const card = document.getElementById(`rotateCard_${pageNo}`);
 
-            if (wrap) {
-                wrap.style.transform = `rotate(${angle}deg)`;
-            }
-
+            if (wrap) wrap.style.transform = `rotate(${angle}deg)`;
             if (badge) {
                 badge.textContent = `${angle}°`;
-                if (angle !== 0) {
-                    badge.classList.add('rotated');
-                } else {
-                    badge.classList.remove('rotated');
-                }
+                if (angle !== 0) badge.classList.add('rotated');
+                else badge.classList.remove('rotated');
             }
-
             if (card) {
-                if (angle !== 0) {
-                    card.classList.add('is-rotated');
-                } else {
-                    card.classList.remove('is-rotated');
-                }
+                if (angle !== 0) card.classList.add('is-rotated');
+                else card.classList.remove('is-rotated');
             }
         }
 
@@ -1813,30 +2354,6 @@ function cleanupFiles($dir) {
             }
         }
 
-        function parsePageRange(rangeStr, maxPage) {
-            const pages = new Set();
-            const parts = rangeStr.split(',');
-            for (let part of parts) {
-                part = part.trim();
-                if (part.includes('-')) {
-                    const rangeParts = part.split('-');
-                    const s = parseInt(rangeParts[0].trim(), 10);
-                    const e = parseInt(rangeParts[1].trim(), 10);
-                    if (!isNaN(s) && !isNaN(e) && s > 0 && e >= s) {
-                        for (let i = s; i <= Math.min(e, maxPage); i++) {
-                            pages.add(i);
-                        }
-                    }
-                } else {
-                    const num = parseInt(part, 10);
-                    if (!isNaN(num) && num > 0 && num <= maxPage) {
-                        pages.add(num);
-                    }
-                }
-            }
-            return Array.from(pages).sort((a, b) => a - b);
-        }
-
         function updateRotateSummaryCounts() {
             let rotatedCount = 0;
             for (let i = 1; i <= rotatePageCount; i++) {
@@ -1852,7 +2369,7 @@ function cleanupFiles($dir) {
 
         function submitRotateForm() {
             if (!rotateFile) {
-                showClientError('rotateClientError', ['回転するPDFファイルを選択してください。']);
+                showClientError('rotateClientError', ['回転するファイルを選択してください。']);
                 return;
             }
 
@@ -1870,6 +2387,61 @@ function cleanupFiles($dir) {
 
             document.getElementById('rotateForm').submit();
         }
+
+        // ==========================================
+        // ドラッグ＆ドロップ初期化
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropZone = document.getElementById('dropZone');
+            if (dropZone) {
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }, false);
+                });
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, function() {
+                        dropZone.classList.add('drag-over');
+                    }, false);
+                });
+                ['dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, function() {
+                        dropZone.classList.remove('drag-over');
+                    }, false);
+                });
+                dropZone.addEventListener('drop', function(e) {
+                    const dt = e.dataTransfer;
+                    if (dt && dt.files) addFiles(dt.files);
+                }, false);
+            }
+
+            const rotateDropZone = document.getElementById('rotateDropZone');
+            if (rotateDropZone) {
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    rotateDropZone.addEventListener(eventName, function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }, false);
+                });
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    rotateDropZone.addEventListener(eventName, function() {
+                        rotateDropZone.classList.add('drag-over');
+                    }, false);
+                });
+                ['dragleave', 'drop'].forEach(eventName => {
+                    rotateDropZone.addEventListener(eventName, function() {
+                        rotateDropZone.classList.remove('drag-over');
+                    }, false);
+                });
+                rotateDropZone.addEventListener('drop', function(e) {
+                    const dt = e.dataTransfer;
+                    if (dt && dt.files && dt.files[0]) {
+                        setRotateFile(dt.files[0]);
+                    }
+                }, false);
+            }
+        });
     </script>
 </body>
 </html>

@@ -1003,12 +1003,14 @@ function cleanupFiles($dir) {
                 <!-- 分割プレビュー＆回転セクション -->
                 <div id="splitPreviewSection" class="split-preview-section" style="display: none;">
                     <div class="split-toolbar">
-                        <span class="split-toolbar-title">ページ選択 ＆ 回転（サムネイルをクリックして90度回転できます）</span>
+                        <span class="split-toolbar-title" id="splitToolbarTitle">ページ選択 ＆ 回転（サムネイルをクリックして90度回転できます）</span>
                         <div class="split-toolbar-group">
                             <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(true)">すべて選択</button>
                             <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(false)">選択解除</button>
-                            <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(90)">全ページ 右90° ↻</button>
-                            <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(-90)">全ページ 左90° ↺</button>
+                        </div>
+                        <div class="split-toolbar-group" id="splitRotateToolbarGroup">
+                            <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(90)">一括 右90° ↻</button>
+                            <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(-90)">一括 左90° ↺</button>
                             <button type="button" class="tool-btn-sm reset" onclick="resetAllSplitRotations()">回転リセット</button>
                         </div>
                     </div>
@@ -1031,16 +1033,16 @@ function cleanupFiles($dir) {
         <!-- PDF回転タブ -->
         <div id="rotate" class="tabcontent">
             <form action="" method="post" enctype="multipart/form-data" id="rotateForm">
-                <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
-                <label for="pdfFileRotateInput">ファイルを選択（PDF・画像・テキスト）:</label>
-                <input type="file" id="pdfFileRotateInput" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" onchange="onRotateFileChange(this)">
+                <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP）</div>
+                <label for="pdfFileRotateInput">ファイルを選択（PDF・画像）:</label>
+                <input type="file" id="pdfFileRotateInput" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp" onchange="onRotateFileChange(this)">
                 <button type="button" class="add-button" onclick="document.getElementById('pdfFileRotateInput').click()">ファイルを選択</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="rotateClientError" class="client-error-box"></div>
                 
                 <div id="rotateDropZone" class="drop-zone">
-                    <div id="rotateDropZoneText" class="drop-zone-text">ここにPDF・画像・テキストファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
+                    <div id="rotateDropZoneText" class="drop-zone-text">ここにPDFまたは画像ファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
                     <div id="rotateSingleFileList" class="file-list"></div>
                 </div>
                 <p class="note">※ 「PDF結合・変換」画面や「PDF分割・抽出」画面でも、ファイルをアップロードしたまま各ページを直接回転できます。</p>
@@ -1071,12 +1073,12 @@ function cleanupFiles($dir) {
                 <div id="rotateToolbar" class="rotate-toolbar-container" style="display: none;">
                     <div class="rotate-toolbar-header">
                         <span class="rotate-toolbar-title">一括回転</span>
-                        <span class="rotate-toolbar-note">全ページまたは指定ページをまとめて回転できます</span>
+                        <span class="rotate-toolbar-note">一括または指定ページをまとめて回転できます</span>
                     </div>
                     <div class="rotate-toolbar-actions">
-                        <button type="button" class="tool-btn" onclick="rotateAllPages(90)">全ページ 右90° ↻</button>
-                        <button type="button" class="tool-btn" onclick="rotateAllPages(-90)">全ページ 左90° ↺</button>
-                        <button type="button" class="tool-btn" onclick="rotateAllPages(180)">全ページ 180°</button>
+                        <button type="button" class="tool-btn" onclick="rotateAllPages(90)">一括 右90° ↻</button>
+                        <button type="button" class="tool-btn" onclick="rotateAllPages(-90)">一括 左90° ↺</button>
+                        <button type="button" class="tool-btn" onclick="rotateAllPages(180)">一括 180°</button>
                         <button type="button" class="tool-btn reset-btn" onclick="resetAllRotations()">すべてリセット</button>
                     </div>
                     <div class="rotate-range-box">
@@ -1354,6 +1356,8 @@ function cleanupFiles($dir) {
                 file.isExpanded = (mergeFiles.length < 3); // 最初の数個は自動で展開表示
                 file.pdfDoc = null;
                 file.previewUrl = null;
+                file.textContent = null;
+                file.isTextExpanded = false;
 
                 if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
                     file.pageCount = 1;
@@ -1363,6 +1367,15 @@ function cleanupFiles($dir) {
                     file.pageCount = null;
                     file.rotations[1] = 0;
                     enqueuePageCount(file);
+                    // テキスト内容を非同期に読み込み
+                    file.text().then(text => {
+                        file.textContent = text;
+                        updateTextPreviewBox(file);
+                    }).catch(err => {
+                        console.warn('テキスト読み込み失敗:', err);
+                        file.textContent = '(テキストの読み込みに失敗しました)';
+                        updateTextPreviewBox(file);
+                    });
                 } else {
                     file.pageCount = null;
                     enqueuePageCount(file);
@@ -1500,8 +1513,15 @@ function cleanupFiles($dir) {
                     // プレビュー・回転トグルボタン
                     const rotateBtn = document.createElement('button');
                     rotateBtn.type = 'button';
-                    rotateBtn.className = `rotate-toggle-btn ${file.isExpanded ? 'active' : ''}`;
-                    rotateBtn.innerHTML = `🔄 回転・プレビュー ${file.isExpanded ? '▲' : '▼'}`;
+                    if (ext === 'txt') {
+                        rotateBtn.className = `rotate-toggle-btn text-toggle-btn ${file.isExpanded ? 'active' : ''}`;
+                        rotateBtn.innerHTML = `📄 テキスト表示 ${file.isExpanded ? '▲' : '▼'}`;
+                        rotateBtn.title = 'テキスト内容のプレビューを表示/非表示';
+                    } else {
+                        rotateBtn.className = `rotate-toggle-btn ${file.isExpanded ? 'active' : ''}`;
+                        rotateBtn.innerHTML = `🔄 ページ回転・プレビュー ${file.isExpanded ? '▲' : '▼'}`;
+                        rotateBtn.title = '各ページの回転とプレビューを表示/非表示';
+                    }
                     rotateBtn.onclick = (e) => {
                         e.stopPropagation();
                         toggleFilePages(i);
@@ -1521,70 +1541,121 @@ function cleanupFiles($dir) {
 
                     // 2. プレビュー・回転セクション（展開時）
                     if (file.isExpanded) {
-                        const pagesSection = document.createElement('div');
-                        pagesSection.className = 'file-item-pages';
+                        if (ext === 'txt') {
+                            // テキストファイルプレビュー領域（回転機能なし・冒頭3行表示＋スライドトグル）
+                            const textSection = document.createElement('div');
+                            textSection.className = 'file-item-pages text-preview-wrapper';
 
-                        // ツールバー
-                        const toolbar = document.createElement('div');
-                        toolbar.className = 'file-pages-toolbar';
+                            const container = document.createElement('div');
+                            container.className = 'text-preview-container';
 
-                        const tbTitle = document.createElement('span');
-                        tbTitle.className = 'toolbar-title';
-                        tbTitle.textContent = file.pageCount !== null ? `各ページ回転（全${file.pageCount}ページ）` : 'ページ解析中...';
-                        toolbar.appendChild(tbTitle);
+                            const txtHeader = document.createElement('div');
+                            txtHeader.className = 'text-preview-header';
+                            const txtTitle = document.createElement('span');
+                            txtTitle.className = 'text-preview-title';
+                            txtTitle.textContent = '📄 テキスト内容プレビュー';
+                            const txtInfo = document.createElement('span');
+                            txtInfo.className = 'text-preview-info';
+                            txtInfo.id = `text_info_${file.uid}`;
 
-                        const tbActions = document.createElement('div');
-                        tbActions.className = 'toolbar-actions';
-                        tbActions.innerHTML = `
-                            <button type="button" class="mini-tool-btn" onclick="rotateFileAllPages(${i}, 90)">全ページ ↻ 90°</button>
-                            <button type="button" class="mini-tool-btn" onclick="rotateFileAllPages(${i}, -90)">全ページ ↺ 90°</button>
-                            <button type="button" class="mini-tool-btn reset" onclick="resetFileRotations(${i})">リセット</button>
-                        `;
-                        toolbar.appendChild(tbActions);
-                        pagesSection.appendChild(toolbar);
+                            txtHeader.appendChild(txtTitle);
+                            txtHeader.appendChild(txtInfo);
+                            container.appendChild(txtHeader);
 
-                        // サムネイルコンテナ
-                        const container = document.createElement('div');
-                        container.className = 'mini-pages-container';
-                        container.id = `mcontainer_${file.uid}`;
+                            const contentBox = document.createElement('div');
+                            contentBox.className = `text-content-box ${file.isTextExpanded ? 'expanded' : 'collapsed'}`;
+                            contentBox.id = `text_box_${file.uid}`;
 
-                        const pageCount = file.pageCount || 1;
-                        for (let p = 1; p <= pageCount; p++) {
-                            const angle = file.rotations[p] || 0;
-                            const card = document.createElement('div');
-                            card.className = `mini-page-card ${angle !== 0 ? 'is-rotated' : ''}`;
-                            card.id = `mcard_${file.uid}_${p}`;
+                            const toggleBtn = document.createElement('button');
+                            toggleBtn.type = 'button';
+                            toggleBtn.className = 'text-slide-toggle-btn';
+                            toggleBtn.id = `text_toggle_${file.uid}`;
+                            toggleBtn.innerHTML = file.isTextExpanded ? '閉じる ▲' : '全文を表示 ▼';
+                            toggleBtn.onclick = (e) => {
+                                e.stopPropagation();
+                                toggleTextSlide(i);
+                            };
 
-                            card.innerHTML = `
-                                <div class="card-top">
-                                    <span class="page-num">P.${p}</span>
-                                    <span class="mini-angle-badge ${angle !== 0 ? 'rotated' : ''}" id="mbadge_${file.uid}_${p}">${angle}°</span>
-                                </div>
-                                <div class="mini-thumb-wrap" onclick="rotateFilePage(${i}, ${p}, 90)" title="クリックで右に90度回転">
-                                    <div class="canvas-holder" id="mholder_${file.uid}_${p}" style="transform: rotate(${angle}deg);">
-                                        ${ext === 'txt' 
-                                            ? '<div class="text-thumb-icon">📄<span>TXT</span></div>'
-                                            : (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
+                            if (file.textContent !== null && file.textContent !== undefined) {
+                                contentBox.textContent = file.textContent;
+                                const lineCount = file.textContent.split('\n').length;
+                                txtInfo.textContent = `${file.textContent.length.toLocaleString()}文字 / ${lineCount}行`;
+                                if (lineCount <= 3 && file.textContent.length < 150) {
+                                    toggleBtn.style.display = 'none';
+                                }
+                            } else {
+                                contentBox.textContent = 'テキストを読み込み中...';
+                                txtInfo.textContent = '読み込み中...';
+                            }
+
+                            container.appendChild(contentBox);
+                            container.appendChild(toggleBtn);
+                            textSection.appendChild(container);
+                            fileItem.appendChild(textSection);
+                        } else {
+                            // PDF / 画像ファイル用 ページ回転・サムネイルセクション
+                            const pagesSection = document.createElement('div');
+                            pagesSection.className = 'file-item-pages';
+
+                            // ツールバー
+                            const toolbar = document.createElement('div');
+                            toolbar.className = 'file-pages-toolbar';
+
+                            const tbTitle = document.createElement('span');
+                            tbTitle.className = 'toolbar-title';
+                            tbTitle.textContent = file.pageCount !== null ? `このファイルのページ回転（${file.pageCount}ページ）` : 'ページ解析中...';
+                            toolbar.appendChild(tbTitle);
+
+                            const tbActions = document.createElement('div');
+                            tbActions.className = 'toolbar-actions';
+                            tbActions.innerHTML = `
+                                <button type="button" class="mini-tool-btn" onclick="rotateFileAllPages(${i}, 90)">一括 ↻ 90°</button>
+                                <button type="button" class="mini-tool-btn" onclick="rotateFileAllPages(${i}, -90)">一括 ↺ 90°</button>
+                                <button type="button" class="mini-tool-btn reset" onclick="resetFileRotations(${i})">リセット</button>
+                            `;
+                            toolbar.appendChild(tbActions);
+                            pagesSection.appendChild(toolbar);
+
+                            // サムネイルコンテナ
+                            const container = document.createElement('div');
+                            container.className = 'mini-pages-container';
+                            container.id = `mcontainer_${file.uid}`;
+
+                            const pageCount = file.pageCount || 1;
+                            for (let p = 1; p <= pageCount; p++) {
+                                const angle = file.rotations[p] || 0;
+                                const card = document.createElement('div');
+                                card.className = `mini-page-card ${angle !== 0 ? 'is-rotated' : ''}`;
+                                card.id = `mcard_${file.uid}_${p}`;
+
+                                card.innerHTML = `
+                                    <div class="card-top">
+                                        <span class="page-num">P.${p}</span>
+                                        <span class="mini-angle-badge ${angle !== 0 ? 'rotated' : ''}" id="mbadge_${file.uid}_${p}">${angle}°</span>
+                                    </div>
+                                    <div class="mini-thumb-wrap" onclick="rotateFilePage(${i}, ${p}, 90)" title="クリックで右に90度回転">
+                                        <div class="canvas-holder" id="mholder_${file.uid}_${p}" style="transform: rotate(${angle}deg);">
+                                            ${['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
                                                 ? `<img src="${file.previewUrl || ''}" alt="P.${p}">`
                                                 : `<canvas id="mcanvas_${file.uid}_${p}"></canvas>`
-                                            )
-                                        }
+                                            }
+                                        </div>
                                     </div>
-                                </div>
-                                <div class="card-actions">
-                                    <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, -90)" title="左90°回転">↺</button>
-                                    <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, 90)" title="右90°回転">↻</button>
-                                </div>
-                            `;
-                            container.appendChild(card);
-                        }
+                                    <div class="card-actions">
+                                        <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, -90)" title="左90°回転">↺</button>
+                                        <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, 90)" title="右90°回転">↻</button>
+                                    </div>
+                                `;
+                                container.appendChild(card);
+                            }
 
-                        pagesSection.appendChild(container);
-                        fileItem.appendChild(pagesSection);
+                            pagesSection.appendChild(container);
+                            fileItem.appendChild(pagesSection);
 
-                        // PDFサムネイル非同期描画
-                        if (ext === 'pdf' && window.pdfjsLib) {
-                            renderFilePdfThumbnails(file, i);
+                            // PDFサムネイル非同期描画
+                            if (ext === 'pdf' && window.pdfjsLib) {
+                                renderFilePdfThumbnails(file, i);
+                            }
                         }
                     }
 
@@ -1615,6 +1686,48 @@ function cleanupFiles($dir) {
                 }
             } catch (err) {
                 console.warn(`renderFilePdfThumbnails failed for ${file.name}:`, err);
+            }
+        }
+
+        function updateTextPreviewBox(file) {
+            const box = document.getElementById(`text_box_${file.uid}`);
+            const info = document.getElementById(`text_info_${file.uid}`);
+            const btn = document.getElementById(`text_toggle_${file.uid}`);
+            if (box && file.textContent !== null) {
+                box.textContent = file.textContent;
+                const lineCount = file.textContent.split('\n').length;
+                if (info) {
+                    info.textContent = `${file.textContent.length.toLocaleString()}文字 / ${lineCount}行`;
+                }
+                if (btn) {
+                    if (lineCount <= 3 && file.textContent.length < 150) {
+                        btn.style.display = 'none';
+                    } else {
+                        btn.style.display = 'inline-flex';
+                    }
+                }
+            }
+        }
+
+        function toggleTextSlide(fileIndex) {
+            const file = mergeFiles[fileIndex];
+            if (!file) return;
+            file.isTextExpanded = !file.isTextExpanded;
+
+            const box = document.getElementById(`text_box_${file.uid}`);
+            const btn = document.getElementById(`text_toggle_${file.uid}`);
+
+            if (box) {
+                if (file.isTextExpanded) {
+                    box.classList.remove('collapsed');
+                    box.classList.add('expanded');
+                } else {
+                    box.classList.remove('expanded');
+                    box.classList.add('collapsed');
+                }
+            }
+            if (btn) {
+                btn.innerHTML = file.isTextExpanded ? '閉じる ▲' : '全文を表示 ▼';
             }
         }
 
@@ -1863,6 +1976,7 @@ function cleanupFiles($dir) {
                     } else if (ext === 'txt') {
                         splitPageCount = await getPageCount(file) || 1;
                         splitPdfDoc = null;
+                        splitFile.textContent = await file.text().catch(() => '');
                         for (let i = 1; i <= splitPageCount; i++) {
                             splitRotations[i] = 0;
                             splitSelectedPages.add(i);
@@ -1913,12 +2027,24 @@ function cleanupFiles($dir) {
             const isText = (ext === 'txt');
             const imgUrl = isImage ? URL.createObjectURL(splitFile) : '';
 
+            // ツールバーの表示制御（テキストファイルは回転不要）
+            const rotToolbarGroup = document.getElementById('splitRotateToolbarGroup');
+            const toolbarTitle = document.getElementById('splitToolbarTitle');
+            if (rotToolbarGroup) {
+                rotToolbarGroup.style.display = isText ? 'none' : 'flex';
+            }
+            if (toolbarTitle) {
+                toolbarTitle.textContent = isText 
+                    ? 'ページ選択' 
+                    : 'ページ選択 ＆ 回転（サムネイルをクリックして90度回転できます）';
+            }
+
             for (let pageNo = 1; pageNo <= splitPageCount; pageNo++) {
                 const isSelected = splitSelectedPages.has(pageNo);
-                const angle = splitRotations[pageNo] || 0;
+                const angle = isText ? 0 : (splitRotations[pageNo] || 0);
 
                 const card = document.createElement('div');
-                card.className = `split-page-card ${isSelected ? 'is-selected' : ''} ${angle !== 0 ? 'is-rotated' : ''}`;
+                card.className = `split-page-card ${isSelected ? 'is-selected' : ''} ${angle !== 0 ? 'is-rotated' : ''} ${isText ? 'is-text-card' : ''}`;
                 card.id = `splitCard_${pageNo}`;
 
                 card.innerHTML = `
@@ -1927,12 +2053,12 @@ function cleanupFiles($dir) {
                             <input type="checkbox" id="splitCheck_${pageNo}" ${isSelected ? 'checked' : ''} onchange="toggleSplitPageSelection(${pageNo}, this.checked)">
                             P.${pageNo}
                         </label>
-                        <span class="angle-badge ${angle !== 0 ? 'rotated' : ''}" id="splitAngleBadge_${pageNo}">${angle}°</span>
+                        ${isText ? '' : `<span class="angle-badge ${angle !== 0 ? 'rotated' : ''}" id="splitAngleBadge_${pageNo}">${angle}°</span>`}
                     </div>
-                    <div class="split-thumb-wrap" onclick="rotateSplitPage(${pageNo}, 90)" title="クリックで右に90度回転">
+                    <div class="split-thumb-wrap ${isText ? 'no-click' : ''}" ${isText ? '' : `onclick="rotateSplitPage(${pageNo}, 90)" title="クリックで右に90度回転"`}>
                         <div class="canvas-wrap" id="splitCanvasWrap_${pageNo}" style="transform: rotate(${angle}deg);">
                             ${isText
-                                ? '<div class="text-thumb-icon">📄<span>TXT</span></div>'
+                                ? `<div class="split-text-box">${escapeHtml(splitFile.textContent || '')}</div>`
                                 : (isImage
                                     ? `<img src="${imgUrl}" alt="P.${pageNo}">`
                                     : `<canvas id="splitCanvas_${pageNo}"></canvas>`
@@ -1940,10 +2066,12 @@ function cleanupFiles($dir) {
                             }
                         </div>
                     </div>
+                    ${isText ? '' : `
                     <div class="card-actions-row">
                         <button type="button" class="split-rot-btn" onclick="rotateSplitPage(${pageNo}, -90)" title="左90°回転">↺ 90°</button>
                         <button type="button" class="split-rot-btn" onclick="rotateSplitPage(${pageNo}, 90)" title="右90°回転">↻ 90°</button>
                     </div>
+                    `}
                 `;
 
                 grid.appendChild(card);
@@ -2149,8 +2277,13 @@ function cleanupFiles($dir) {
             showClientError(errorContainer, []);
 
             const ext = getFileExtension(file.name);
-            if (!ALLOWED_MERGE_EXTS.includes(ext)) {
-                showClientError(errorContainer, ['対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。']);
+            const ALLOWED_ROTATE_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
+            if (!ALLOWED_ROTATE_EXTS.includes(ext)) {
+                if (ext === 'txt') {
+                    showClientError(errorContainer, ['テキストファイル（.txt）は回転機能に対応していません。PDFまたは画像ファイルを選択してください。']);
+                } else {
+                    showClientError(errorContainer, ['対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP）。']);
+                }
                 return;
             }
 
@@ -2188,10 +2321,6 @@ function cleanupFiles($dir) {
                     rotatePageCount = 1;
                     rotatePdfDoc = null;
                     pageRotations[1] = 0;
-                } else if (ext === 'txt') {
-                    rotatePageCount = await getPageCount(file) || 1;
-                    rotatePdfDoc = null;
-                    for (let i = 1; i <= rotatePageCount; i++) pageRotations[i] = 0;
                 } else {
                     const arrayBuffer = await file.arrayBuffer();
                     if (window.pdfjsLib) {
@@ -2245,7 +2374,6 @@ function cleanupFiles($dir) {
 
             const ext = rotateFile ? getFileExtension(rotateFile.name) : 'pdf';
             const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
-            const isText = (ext === 'txt');
             const imgUrl = isImage ? URL.createObjectURL(rotateFile) : '';
 
             for (let pageNo = 1; pageNo <= rotatePageCount; pageNo++) {
@@ -2260,12 +2388,9 @@ function cleanupFiles($dir) {
                     </div>
                     <div class="thumb-container" onclick="rotatePage(${pageNo}, 90)" title="クリックで時計回りに90度回転">
                         <div class="canvas-wrap" id="canvasWrap_${pageNo}">
-                            ${isText
-                                ? '<div class="text-thumb-icon" style="font-size: 32px; color: #64748b;">📄<div style="font-size: 11px; font-weight: bold;">TXT</div></div>'
-                                : (isImage
-                                    ? `<img src="${imgUrl}" alt="P.${pageNo}" style="max-width: 130px; max-height: 170px; object-fit: contain;">`
-                                    : `<canvas id="thumbCanvas_${pageNo}"></canvas>`
-                                )
+                            ${isImage
+                                ? `<img src="${imgUrl}" alt="P.${pageNo}" style="max-width: 130px; max-height: 170px; object-fit: contain;">`
+                                : `<canvas id="thumbCanvas_${pageNo}"></canvas>`
                             }
                         </div>
                     </div>
@@ -2277,7 +2402,7 @@ function cleanupFiles($dir) {
                 `;
                 grid.appendChild(card);
 
-                if (!isImage && !isText && rotatePdfDoc) {
+                if (!isImage && rotatePdfDoc) {
                     renderPageThumbnail(pageNo);
                 }
             }

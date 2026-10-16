@@ -12,10 +12,142 @@ define('MAX_SINGLE_FILE_SIZE', 100 * 1024 * 1024); // 100MB
 define('MAX_TOTAL_SIZE', 200 * 1024 * 1024);       // 200MB
 define('LOG_DIR', __DIR__ . '/logs/');
 define('LOG_FILE', LOG_DIR . 'app.log');
+define('FONT_DIR', __DIR__ . '/fonts/');
+if (!defined('_SYSTEM_TTFONTS')) {
+    define('_SYSTEM_TTFONTS', FONT_DIR);
+}
+define('ALLOWED_MERGE_EXTENSIONS', ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'txt']);
 
 // ログディレクトリの作成
 if (!file_exists(LOG_DIR)) {
     @mkdir(LOG_DIR, 0777, true);
+}
+if (!file_exists(FONT_DIR)) {
+    @mkdir(FONT_DIR, 0777, true);
+}
+
+/**
+ * 画像ファイルをPDFに変換する
+ * 
+ * @param string $imagePath 元画像パス
+ * @param string $outputPath 出力先PDFパス
+ * @return bool
+ */
+function convertImageToPdf($imagePath, $outputPath) {
+    $info = @getimagesize($imagePath);
+    if (!$info) {
+        throw new Exception("画像ファイルとして認識できません。");
+    }
+    
+    $width = $info[0];
+    $height = $info[1];
+    $mime = $info['mime'];
+    
+    $tempPng = null;
+    $actualFile = $imagePath;
+    
+    // WebP や GIF は GD で一時的に PNG に変換
+    if ($mime === 'image/webp' || $mime === 'image/gif') {
+        $tempPng = $outputPath . '_temp.png';
+        if ($mime === 'image/webp') {
+            if (!function_exists('imagecreatefromwebp')) {
+                throw new Exception("WebP形式の変換に対応していません。");
+            }
+            $img = @imagecreatefromwebp($imagePath);
+        } else {
+            $img = @imagecreatefromgif($imagePath);
+        }
+        if (!$img) {
+            throw new Exception("画像のデコードに失敗しました。");
+        }
+        imagepng($img, $tempPng);
+        $actualFile = $tempPng;
+    }
+    
+    require_once('vendor/autoload.php');
+    $pdf = new \setasign\Fpdi\Fpdi();
+    $orientation = ($width > $height) ? 'L' : 'P';
+    
+    // A4 用紙サイズ (mm)
+    $pageW = ($orientation === 'L') ? 297 : 210;
+    $pageH = ($orientation === 'L') ? 210 : 297;
+    $margin = 10;
+    $maxW = $pageW - ($margin * 2);
+    $maxH = $pageH - ($margin * 2);
+    
+    $scale = min($maxW / $width, $maxH / $height);
+    $w = $width * $scale;
+    $h = $height * $scale;
+    $x = ($pageW - $w) / 2;
+    $y = ($pageH - $h) / 2;
+    
+    $pdf->AddPage($orientation, 'A4');
+    $pdf->Image($actualFile, $x, $y, $w, $h);
+    $pdf->Output('F', $outputPath);
+    
+    if ($tempPng && file_exists($tempPng)) {
+        @unlink($tempPng);
+    }
+    return true;
+}
+
+/**
+ * テキストファイルをPDFに変換する
+ * 
+ * @param string $textPath 元テキストファイルパス
+ * @param string $outputPath 出力先PDFパス
+ * @return int ページ数
+ */
+function convertTextToPdf($textPath, $outputPath) {
+    $content = @file_get_contents($textPath);
+    if ($content === false) {
+        throw new Exception("テキストファイルの読み込みに失敗しました。");
+    }
+    
+    // 文字コードをUTF-8に正規化
+    $encoding = mb_detect_encoding($content, ['UTF-8', 'SJIS-win', 'eucJP-win', 'SJIS', 'EUC-JP', 'ASCII'], true);
+    if ($encoding !== 'UTF-8') {
+        $content = mb_convert_encoding($content, 'UTF-8', $encoding ?: 'auto');
+    }
+    
+    // 改行コード正規化
+    $content = str_replace(["\r\n", "\r"], "\n", $content);
+    
+    require_once('vendor/autoload.php');
+    
+    $pdf = new \tFPDF();
+    $pdf->SetMargins(15, 15, 15);
+    $pdf->SetAutoPageBreak(true, 15);
+    $pdf->AddPage('P', 'A4');
+    
+    $fontFile = 'ipag.ttf';
+    if (!file_exists(FONT_DIR . $fontFile) && file_exists('/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf')) {
+        @copy('/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf', FONT_DIR . $fontFile);
+    }
+    
+    // フォントキャッシュが別環境の古いパスを指している場合は自動削除
+    $unifontDir = __DIR__ . '/vendor/setasign/tfpdf/font/unifont/';
+    $mtxFile = $unifontDir . 'ipag.mtx.php';
+    if (file_exists($mtxFile)) {
+        $mtxContent = @file_get_contents($mtxFile);
+        if ($mtxContent && preg_match('/\$ttffile=\'(.*?)\';/', $mtxContent, $matches)) {
+            if (!file_exists($matches[1])) {
+                @unlink($mtxFile);
+                @unlink($unifontDir . 'ipag.cw.dat');
+                @unlink($unifontDir . 'ipag.cw127.php');
+            }
+        }
+    }
+    
+    $pdf->AddFont('IPAGothic', '', $fontFile, true);
+    $pdf->SetFont('IPAGothic', '', 10.5);
+    
+    // MultiCellで自動改行描画
+    $pdf->MultiCell(0, 5.5, $content);
+    
+    $pdf->Output('F', $outputPath);
+    
+    return $pdf->PageNo();
 }
 
 /**
@@ -73,7 +205,7 @@ function getUploadErrorMessage($errorCode, $fileName = '') {
     }
 }
 
-// API: PDFページ数取得用のエンドポイント (非同期リクエスト用)
+// API: ページ数取得用のエンドポイント (非同期リクエスト用)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_page_count') {
     header('Content-Type: application/json');
     if (!empty($_FILES['pdfFile']['tmp_name'])) {
@@ -86,6 +218,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             echo json_encode(['success' => false, 'message' => 'ファイルサイズが上限（100MB）を超えています。']);
             exit;
         }
+
+        $fileName = $file['name'] ?? '';
+        $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+        // 画像ファイルは1ページとして即時返却
+        if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) {
+            echo json_encode(['success' => true, 'pageCount' => 1]);
+            exit;
+        }
+
+        // テキストファイルはページ数を変換して取得
+        if ($ext === 'txt') {
+            try {
+                $tempPdfPath = sys_get_temp_dir() . '/' . uniqid('txt_cnt_') . '.pdf';
+                $pageCount = convertTextToPdf($file['tmp_name'], $tempPdfPath);
+                @unlink($tempPdfPath);
+                echo json_encode(['success' => true, 'pageCount' => $pageCount]);
+            } catch (Exception $e) {
+                writeLog("get_page_count (text) failed for {$fileName}: " . $e->getMessage(), "WARN");
+                echo json_encode(['success' => false, 'message' => 'テキスト解析エラー: ' . $e->getMessage()]);
+            }
+            exit;
+        }
+
+        // PDFファイル
         require_once('vendor/autoload.php');
         try {
             $tempPdf = new \setasign\Fpdi\Fpdi();
@@ -234,9 +391,10 @@ function mergePdfs($files, $expectedCount = null) {
             continue;
         }
         
-        // 拡張子チェック
-        if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== 'pdf') {
-            $errors[] = "ファイル「{$name}」: PDFファイル以外の形式は結合できません。";
+        // 拡張子チェック（PDF, JPG, PNG, GIF, WebP, TXT）
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        if (!in_array($ext, ALLOWED_MERGE_EXTENSIONS, true)) {
+            $errors[] = "ファイル「{$name}」: 対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。";
             continue;
         }
         
@@ -269,23 +427,46 @@ function mergePdfs($files, $expectedCount = null) {
         $name = $files['name'][$i];
         $uploadPath = $uploadDir . uniqid() . '_' . $name;
         if (move_uploaded_file($tmpName, $uploadPath)) {
-            $uploadedFiles[] = $uploadPath;
+            $uploadedFiles[] = [
+                'path' => $uploadPath,
+                'name' => $name,
+                'ext' => strtolower(pathinfo($name, PATHINFO_EXTENSION))
+            ];
         } else {
-            foreach ($uploadedFiles as $f) { @unlink($f); }
+            foreach ($uploadedFiles as $f) { @unlink($f['path']); }
             writeLog("Merge failed: failed to move uploaded file {$name}", "ERROR");
             return ['success' => false, 'message' => "ファイル「{$name}」の一時保存に失敗しました。"];
         }
     }
     
-    // TCPDF-FPDIを使用してPDFを結合
     require_once('vendor/autoload.php');
     
+    $tempConvertedPdfs = [];
     try {
         $pdf = new \setasign\Fpdi\Fpdi();
         $totalPageCount = 0;
         
-        foreach ($uploadedFiles as $file) {
-            $pageCount = $pdf->setSourceFile($file);
+        foreach ($uploadedFiles as $item) {
+            $filePath = $item['path'];
+            $ext = $item['ext'];
+            $sourcePdf = $filePath;
+            
+            // 画像形式の場合: PDFに変換
+            if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) {
+                $tempPdfPath = $uploadDir . uniqid('img_') . '.pdf';
+                convertImageToPdf($filePath, $tempPdfPath);
+                $tempConvertedPdfs[] = $tempPdfPath;
+                $sourcePdf = $tempPdfPath;
+            }
+            // テキスト形式の場合: PDFに変換
+            elseif ($ext === 'txt') {
+                $tempPdfPath = $uploadDir . uniqid('txt_') . '.pdf';
+                convertTextToPdf($filePath, $tempPdfPath);
+                $tempConvertedPdfs[] = $tempPdfPath;
+                $sourcePdf = $tempPdfPath;
+            }
+            
+            $pageCount = $pdf->setSourceFile($sourcePdf);
             $totalPageCount += $pageCount;
             
             for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
@@ -297,14 +478,19 @@ function mergePdfs($files, $expectedCount = null) {
         }
         
         $firstFileName = pathinfo($files['name'][0], PATHINFO_FILENAME);
-        $outputFile = $outputDir . $firstFileName . '_merged.pdf';
+        $suffix = (count($uploadedFiles) === 1 && $uploadedFiles[0]['ext'] !== 'pdf') ? '_converted.pdf' : '_merged.pdf';
+        $outputFile = $outputDir . $firstFileName . $suffix;
         $pdf->Output('F', $outputFile);
         
-        foreach ($uploadedFiles as $file) {
-            @unlink($file);
+        // クリーンアップ
+        foreach ($uploadedFiles as $item) {
+            @unlink($item['path']);
+        }
+        foreach ($tempConvertedPdfs as $tempPdf) {
+            @unlink($tempPdf);
         }
         
-        writeLog("Merge successful: {$uploadedCount} files, {$totalPageCount} pages -> {$outputFile}", "INFO");
+        writeLog("Merge/Convert successful: {$uploadedCount} files, {$totalPageCount} pages -> {$outputFile}", "INFO");
         
         return [
             'success' => true,
@@ -313,11 +499,14 @@ function mergePdfs($files, $expectedCount = null) {
             'pageCount' => $totalPageCount
         ];
     } catch (Exception $e) {
-        foreach ($uploadedFiles as $file) {
-            @unlink($file);
+        foreach ($uploadedFiles as $item) {
+            @unlink($item['path']);
+        }
+        foreach ($tempConvertedPdfs as $tempPdf) {
+            @unlink($tempPdf);
         }
         writeLog("Merge exception: " . $e->getMessage(), "ERROR");
-        return ['success' => false, 'message' => 'PDF結合エラー: ' . $e->getMessage()];
+        return ['success' => false, 'message' => 'PDF処理エラー: ' . $e->getMessage()];
     }
 }
 
@@ -633,20 +822,21 @@ function cleanupFiles($dir) {
         <!-- PDF結合タブ -->
         <div id="merge" class="tabcontent" style="display: block;">
             <form action="" method="post" enctype="multipart/form-data" id="mergeForm">
-                <div class="limit-badge">上限: 最大100ファイル / 合計200MB / 1ファイル100MB</div>
-                <label for="pdfFileAdd">PDFファイルを選択（複数可）:</label>
-                <input type="file" name="pdfFileAdd" id="pdfFileAdd" accept=".pdf" multiple onchange="addFiles(this.files)">
+                <div class="limit-badge">上限: 最大100ファイル / 合計200MB / 1ファイル100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
+                <label for="pdfFileAdd">ファイルを選択（PDF・画像・テキスト / 複数可）:</label>
+                <input type="file" name="pdfFileAdd" id="pdfFileAdd" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" multiple onchange="addFiles(this.files)">
                 <button type="button" class="add-button" onclick="document.getElementById('pdfFileAdd').click()">ファイルを追加</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="mergeClientError" class="client-error-box"></div>
                 
                 <div id="dropZone" class="drop-zone">
-                    <div class="drop-zone-text">ここにPDFファイルをドラッグ＆ドロップ（またはファイルを追加ボタン）</div>
+                    <div class="drop-zone-text">ここにPDF・画像・テキストファイルをドラッグ＆ドロップ（またはファイルを追加ボタン）</div>
                     <div id="fileList" class="file-list sortable"></div>
                 </div>
                 <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。<br>
-                   ※ 一度に結合できるファイル数は最大100個、合計サイズは最大200MBまでです。</p>
+                   ※ 画像（JPG, PNG, GIF, WebP）やテキスト（TXT）も自動でPDFページに変換され、PDFとの混在結合や単体変換が可能です。<br>
+                   ※ 一度に処理できるファイル数は最大100個、合計サイズは最大200MBまでです。</p>
                 
                 <!-- リアルタイムサマリー表示領域 -->
                 <div id="mergeSummary" class="summary-container" style="display: none;">
@@ -1049,6 +1239,22 @@ function cleanupFiles($dir) {
             }
         });
         
+        const ALLOWED_MERGE_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'txt'];
+
+        function getFileExtension(filename) {
+            return filename.slice((filename.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase();
+        }
+
+        function getFileTypeInfo(ext) {
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                return { label: '画像', type: 'image' };
+            }
+            if (ext === 'txt') {
+                return { label: 'テキスト', type: 'text' };
+            }
+            return { label: 'PDF', type: 'pdf' };
+        }
+
         // ファイルを追加する関数
         async function addFiles(files) {
             if (!files || files.length === 0) return;
@@ -1058,10 +1264,11 @@ function cleanupFiles($dir) {
             
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
+                const ext = getFileExtension(file.name);
                 
-                // 拡張子チェック
-                if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-                    errorMessages.push(`ファイル「${file.name}」: PDFファイル以外の形式は結合できません。`);
+                // 拡張子チェック（PDF, 画像, テキスト）
+                if (!ALLOWED_MERGE_EXTS.includes(ext)) {
+                    errorMessages.push(`ファイル「${file.name}」: 対応していない形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。`);
                     continue;
                 }
                 
@@ -1071,13 +1278,16 @@ function cleanupFiles($dir) {
                     continue;
                 }
                 
-                // 全ての有効なPDFファイルを追加（100個を超えても切り捨てず、全数を保持して超過状態を表示）
-                file.pageCount = null;
+                // 画像ファイルは1ページ固定
+                if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                    file.pageCount = 1;
+                } else {
+                    file.pageCount = null;
+                    enqueuePageCount(file);
+                }
+
                 mergeFiles.push(file);
                 addedCount++;
-                
-                // キューに追加して安全に非同期解析（最大4並列）
-                enqueuePageCount(file);
             }
             
             // input[type=file]をクリアして同じファイルを再度選択可能にする
@@ -1142,18 +1352,21 @@ function cleanupFiles($dir) {
                     totalSizeVal.textContent = `${formatFileSize(totalBytes)} / 200MB`;
                 }
                 
+                const isSingleConvert = (mergeFiles.length === 1 && getFileTypeInfo(getFileExtension(mergeFiles[0].name)).type !== 'pdf');
+                const defaultBtnText = isSingleConvert ? 'PDFに変換' : 'PDFを結合';
+
                 if (isExceeded) {
                     summaryDiv.classList.add('limit-exceeded');
                     warningText.innerHTML = warnings.join('<br>');
                     warningText.style.display = 'block';
                     submitBtn.disabled = true;
-                    submitBtn.textContent = '上限を超えているため結合できません';
+                    submitBtn.textContent = '上限を超えているため処理できません';
                 } else {
                     summaryDiv.classList.remove('limit-exceeded');
                     warningText.innerHTML = '';
                     warningText.style.display = 'none';
                     submitBtn.disabled = false;
-                    submitBtn.textContent = 'PDFを結合';
+                    submitBtn.textContent = defaultBtnText;
                     
                     // ファイル数が上限以内になったら、ファイル数超過のエラー表示もクリア
                     const clientError = document.getElementById('mergeClientError');
@@ -1177,6 +1390,9 @@ function cleanupFiles($dir) {
             if (mergeFiles.length > 0) {
                 for (let i = 0; i < mergeFiles.length; i++) {
                     const file = mergeFiles[i];
+                    const ext = getFileExtension(file.name);
+                    const typeInfo = getFileTypeInfo(ext);
+
                     const fileItem = document.createElement('div');
                     fileItem.className = 'file-item';
                     fileItem.dataset.index = i;
@@ -1186,6 +1402,11 @@ function cleanupFiles($dir) {
                     handle.innerHTML = '&#8597;';
                     fileItem.appendChild(handle);
                     
+                    const typeBadge = document.createElement('span');
+                    typeBadge.className = `file-type-badge type-${typeInfo.type}`;
+                    typeBadge.textContent = typeInfo.label;
+                    fileItem.appendChild(typeBadge);
+
                     const fileName = document.createElement('span');
                     fileName.className = 'file-name';
                     fileName.textContent = file.name;

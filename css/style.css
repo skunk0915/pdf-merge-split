@@ -242,9 +242,34 @@ input[name=pdfFileAdd] {
   display: none;
 }
 
+.file-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-right: 8px;
+  display: inline-block;
+}
+.file-type-badge.type-pdf {
+  background-color: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+.file-type-badge.type-image {
+  background-color: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+.file-type-badge.type-text {
+  background-color: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
 .file-name {
   font-weight: 500;
   color: #1e293b;
+  word-break: break-all;
 }
 
 .file-size {

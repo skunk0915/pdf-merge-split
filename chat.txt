@@ -103,3 +103,26 @@ AI: PDFの各ページを90度単位で回転（右90°/左90°/180°/リセッ�
 - css/style.css.map
 - index.php
 - scss/style.scss
+
+2026-10-16 12:37:08
+USER: 画像やテキストファイルのアップに対応可能か。ｐｄｆに変換する
+AI: PDF結合機能において、PDFに加えて画像ファイル（JPG, PNG, GIF, WebP）およびテキストファイル（.txt）の直接アップロードに対応しました。画像はA4用紙サイズに合わせて縦横比を自動維持してフィット配置し、テキストは日本語（UTF-8）の自動改行・ページ送りを適用した高品質なテキストPDFとして変換します。ファイル単体のアップロード時は単体PDF変換ツールとして動作し、複数ファイル時はPDF・画像・テキストを任意の並び順で1本のPDFに結合できます。また、ファイルリスト上にファイル種別バッジ（[PDF], [画像], [テキスト]）を追加し、本番環境（Xserver VPS）へデプロイ・動作検証を完了しました。
+編集したファイルパス:
+- .gitignore
+- README.md
+- composer.json
+- composer.lock
+- css/style.css
+- css/style.css.map
+- fonts/ipag.ttf
+- index.php
+- scss/style.scss
+- vendor/autoload.php
+- vendor/composer/InstalledVersions.php
+- vendor/composer/autoload_classmap.php
+- vendor/composer/autoload_static.php
+- vendor/composer/installed.json
+- vendor/composer/installed.php
+- vendor/composer/platform_check.php
+- vendor/setasign/tfpdf/
+

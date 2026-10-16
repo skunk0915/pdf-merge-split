@@ -164,6 +164,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             writeLog("Split request failed: no file found in \$_FILES", "WARN");
         }
     }
+
+    // PDFの回転処理
+    if (isset($_POST['rotate'])) {
+        if (!empty($_FILES['pdfFileRotate']['name'])) {
+            $rotations = isset($_POST['rotations']) ? $_POST['rotations'] : '';
+            $result = rotatePdf($_FILES['pdfFileRotate'], $rotations);
+            if ($result['success']) {
+                $message = '回転が完了しました。（対象ファイル: 1、合計ページ数: ' . $result['pageCount'] . 'ページ、回転ページ数: ' . $result['rotatedPageCount'] . 'ページ）';
+                $downloadLink = $result['file'];
+            } else {
+                $message = 'エラー: ' . $result['message'];
+            }
+        } else {
+            $message = 'エラー: 回転するPDFファイルが選択されていないか、送信データが破損しています。';
+            writeLog("Rotate request failed: no file found in \$_FILES", "WARN");
+        }
+    }
 }
 
 /**
@@ -470,6 +487,112 @@ function splitPdf($file, $pages) {
 }
 
 /**
+ * PDFファイルの各ページを90度単位で回転する
+ * 
+ * @param array $file アップロードされたファイル情報
+ * @param string|array $rotationsJson ページごとの回転角度情報 (JSON文字列)
+ * @return array 処理結果
+ */
+function rotatePdf($file, $rotationsJson) {
+    global $uploadDir, $outputDir;
+
+    if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+        $errorCode = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+        $name = $file['name'] ?? 'PDFファイル';
+        writeLog("Rotate upload error: code {$errorCode} for {$name}", "WARN");
+        return ['success' => false, 'message' => getUploadErrorMessage($errorCode, $name)];
+    }
+
+    $tmpName = $file['tmp_name'];
+    $name = $file['name'];
+    $size = $file['size'];
+
+    if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) !== 'pdf') {
+        return ['success' => false, 'message' => 'PDFファイルのみアップロードできます。'];
+    }
+
+    if ($size > MAX_SINGLE_FILE_SIZE || filesize($tmpName) > MAX_SINGLE_FILE_SIZE) {
+        writeLog("Rotate failed: file {$name} exceeds 100MB", "WARN");
+        return ['success' => false, 'message' => 'ファイルサイズが上限（100MB）を超えています。'];
+    }
+
+    // 回転情報のパース（各ページ番号 => 回転角度）
+    $rotations = [];
+    if (!empty($rotationsJson)) {
+        if (is_array($rotationsJson)) {
+            $rotations = $rotationsJson;
+        } else {
+            $decoded = json_decode($rotationsJson, true);
+            if (is_array($decoded)) {
+                $rotations = $decoded;
+            }
+        }
+    }
+
+    $uploadPath = $uploadDir . uniqid() . '_' . $name;
+    if (!move_uploaded_file($tmpName, $uploadPath)) {
+        writeLog("Rotate failed: failed to move uploaded file {$name}", "ERROR");
+        return ['success' => false, 'message' => 'ファイルのアップロードに失敗しました。'];
+    }
+
+    require_once('vendor/autoload.php');
+
+    try {
+        $pdf = new \setasign\Fpdi\Fpdi();
+        $pageCount = $pdf->setSourceFile($uploadPath);
+
+        if ($pageCount === 0) {
+            @unlink($uploadPath);
+            return ['success' => false, 'message' => 'PDFのページ数が0です。'];
+        }
+
+        $rotatedPageCount = 0;
+        for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+            $template = $pdf->importPage($pageNo);
+            $size = $pdf->getTemplateSize($template);
+
+            // 指定された角度（デフォルト0度）
+            $angle = 0;
+            if (isset($rotations[$pageNo])) {
+                $angle = (int)$rotations[$pageNo];
+            } elseif (isset($rotations[(string)$pageNo])) {
+                $angle = (int)$rotations[(string)$pageNo];
+            }
+
+            // 0, 90, 180, 270 に正規化
+            $angle = (($angle % 360) + 360) % 360;
+            $angle = (int)(round($angle / 90) * 90) % 360;
+
+            if ($angle !== 0) {
+                $rotatedPageCount++;
+            }
+
+            $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
+            $pdf->useTemplate($template);
+        }
+
+        $originalFilename = pathinfo($name, PATHINFO_FILENAME);
+        $outputFile = $outputDir . $originalFilename . '_rotated.pdf';
+        $pdf->Output('F', $outputFile);
+
+        @unlink($uploadPath);
+        writeLog("Rotate successful: {$name} ({$pageCount} pages, {$rotatedPageCount} rotated) -> {$outputFile}", "INFO");
+
+        return [
+            'success' => true,
+            'file' => $outputFile,
+            'fileCount' => 1,
+            'pageCount' => $pageCount,
+            'rotatedPageCount' => $rotatedPageCount
+        ];
+    } catch (Exception $e) {
+        @unlink($uploadPath);
+        writeLog("Rotate exception: " . $e->getMessage(), "ERROR");
+        return ['success' => false, 'message' => 'PDF回転エラー: ' . $e->getMessage()];
+    }
+}
+
+/**
  * 古いファイルを削除する（24時間以上経過したファイル）
  * 
  * @param string $dir 対象ディレクトリ
@@ -493,16 +616,18 @@ function cleanupFiles($dir) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDFツール - 結合・分割</title>
+    <title>PDFツール - 結合・分割・回転</title>
     <link rel="stylesheet" href="css/style.css?v=<?php echo file_exists('css/style.css') ? filemtime('css/style.css') : time(); ?>">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
-    <h1>PDFツール - 結合・分割</h1>
+    <h1>PDFツール - 結合・分割・回転</h1>
     
     <div class="container">
         <div class="tab">
             <button class="tablinks active" onclick="openTab(event, 'merge')">PDF結合</button>
             <button class="tablinks" onclick="openTab(event, 'split')">PDF分割</button>
+            <button class="tablinks" onclick="openTab(event, 'rotate')">PDF回転</button>
         </div>
         
         <!-- PDF結合タブ -->
@@ -585,6 +710,83 @@ function cleanupFiles($dir) {
                    ※ 1ファイルあたり最大100MBまでアップロード可能です。</p>
                 
                 <button type="submit" name="split" id="splitSubmitBtn" class="submit-button">PDFを分割</button>
+            </form>
+        </div>
+        
+        <!-- PDF回転タブ -->
+        <div id="rotate" class="tabcontent">
+            <form action="" method="post" enctype="multipart/form-data" id="rotateForm">
+                <div class="limit-badge">上限: 1ファイル最大100MB</div>
+                <label for="pdfFileRotateInput">PDFファイルを選択:</label>
+                <input type="file" id="pdfFileRotateInput" accept=".pdf" onchange="onRotateFileChange(this)">
+                <button type="button" class="add-button" onclick="document.getElementById('pdfFileRotateInput').click()">ファイルを選択</button>
+                
+                <!-- クライアントサイドのエラー通知領域 -->
+                <div id="rotateClientError" class="client-error-box"></div>
+                
+                <div id="rotateDropZone" class="drop-zone">
+                    <div id="rotateDropZoneText" class="drop-zone-text">ここにPDFファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
+                    <div id="rotateSingleFileList" class="file-list"></div>
+                </div>
+
+                <!-- リアルタイムサマリー表示領域 -->
+                <div id="rotateSummary" class="summary-container" style="display: none;">
+                    <div class="summary-stats">
+                        <div class="summary-item">
+                            <span class="summary-label">ファイル名:</span>
+                            <span id="rotateFileName" class="summary-value filename-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">合計ページ数:</span>
+                            <span id="rotatePageCount" class="summary-value">0ページ</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">回転設定ページ:</span>
+                            <span id="rotateTargetCount" class="summary-value">0 / 0</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">ファイルサイズ:</span>
+                            <span id="rotateFileSize" class="summary-value">0 MB</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 一括操作ツールバー -->
+                <div id="rotateToolbar" class="rotate-toolbar-container" style="display: none;">
+                    <div class="rotate-toolbar-header">
+                        <span class="rotate-toolbar-title">一括回転</span>
+                        <span class="rotate-toolbar-note">全ページまたは指定ページをまとめて回転できます</span>
+                    </div>
+                    <div class="rotate-toolbar-actions">
+                        <button type="button" class="tool-btn" onclick="rotateAllPages(90)">全ページ 右90° ↻</button>
+                        <button type="button" class="tool-btn" onclick="rotateAllPages(-90)">全ページ 左90° ↺</button>
+                        <button type="button" class="tool-btn" onclick="rotateAllPages(180)">全ページ 180°</button>
+                        <button type="button" class="tool-btn reset-btn" onclick="resetAllRotations()">すべてリセット</button>
+                    </div>
+                    <div class="rotate-range-box">
+                        <span class="range-label">ページ指定で回転:</span>
+                        <div class="range-inputs">
+                            <input type="text" id="rotateRangeInput" placeholder="例: 1, 3-5, 8" class="range-text-input">
+                            <button type="button" class="tool-btn-sm" onclick="rotateRangePages(90)">右90° ↻</button>
+                            <button type="button" class="tool-btn-sm" onclick="rotateRangePages(-90)">左90° ↺</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 各ページグリッド -->
+                <div id="rotatePagesContainer" class="rotate-pages-container" style="display: none;">
+                    <div class="pages-grid-header">
+                        <span class="pages-grid-title">ページ一覧（サムネイルやボタンをクリックして個別に90度回転できます）</span>
+                    </div>
+                    <div id="rotatePagesGrid" class="rotate-pages-grid"></div>
+                </div>
+
+                <!-- 隠しフィールド -->
+                <input type="hidden" name="rotations" id="rotationsJsonInput" value="{}">
+                <input type="hidden" name="rotate" value="1">
+                <input type="file" name="pdfFileRotate" id="actualRotateFileInput" style="display: none;">
+
+                <button type="button" id="rotateSubmitBtn" onclick="submitRotateForm()" class="submit-button" style="display: none;">回転したPDFを保存</button>
             </form>
         </div>
     </div>
@@ -815,6 +1017,36 @@ function cleanupFiles($dir) {
                 const files = dt.files;
                 addFiles(files);
             }, false);
+
+            // PDF回転用ドロップゾーン
+            const rotateDropZone = document.getElementById('rotateDropZone');
+            if (rotateDropZone) {
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    rotateDropZone.addEventListener(eventName, function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }, false);
+                });
+                
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    rotateDropZone.addEventListener(eventName, function() {
+                        rotateDropZone.classList.add('drag-over');
+                    }, false);
+                });
+                
+                ['dragleave', 'drop'].forEach(eventName => {
+                    rotateDropZone.addEventListener(eventName, function() {
+                        rotateDropZone.classList.remove('drag-over');
+                    }, false);
+                });
+                
+                rotateDropZone.addEventListener('drop', function(e) {
+                    const dt = e.dataTransfer;
+                    if (dt.files && dt.files[0]) {
+                        setRotateFile(dt.files[0]);
+                    }
+                }, false);
+            }
         });
         
         // ファイルを追加する関数
@@ -1121,6 +1353,301 @@ function cleanupFiles($dir) {
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // ==========================================
+        // PDF回転機能用スクリプト
+        // ==========================================
+        let rotateFile = null;
+        let rotatePdfDoc = null;
+        let rotatePageCount = 0;
+        let pageRotations = {}; // { 1: 0, 2: 90, ... }
+
+        if (window.pdfjsLib) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        async function onRotateFileChange(input) {
+            if (input.files && input.files[0]) {
+                await setRotateFile(input.files[0]);
+            }
+        }
+
+        async function setRotateFile(file) {
+            const errorContainer = 'rotateClientError';
+            showClientError(errorContainer, []);
+
+            // 拡張子チェック
+            if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+                showClientError(errorContainer, ['PDFファイル以外の形式は選択できません。']);
+                return;
+            }
+
+            // サイズチェック（100MB）
+            if (file.size > MAX_SINGLE_FILE_SIZE) {
+                showClientError(errorContainer, [
+                    `ファイル「${file.name}」のサイズ（${formatFileSize(file.size)}）が上限（100MB）を超えています。100MB以下のファイルを選択してください。`
+                ]);
+                return;
+            }
+
+            rotateFile = file;
+            pageRotations = {};
+
+            const dropText = document.getElementById('rotateDropZoneText');
+            if (dropText) dropText.style.display = 'none';
+
+            const singleList = document.getElementById('rotateSingleFileList');
+            singleList.innerHTML = `
+                <div class="file-item">
+                    <span class="file-name">${escapeHtml(file.name)}</span>
+                    <span class="file-size">${formatFileSize(file.size)}</span>
+                    <span class="remove" onclick="clearRotateFile(event)">&times;</span>
+                </div>
+            `;
+
+            const summary = document.getElementById('rotateSummary');
+            summary.style.display = 'flex';
+            document.getElementById('rotateFileName').textContent = file.name;
+            document.getElementById('rotateFileSize').textContent = formatFileSize(file.size);
+            document.getElementById('rotatePageCount').textContent = '解析中...';
+            document.getElementById('rotateTargetCount').textContent = '0 / -';
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                if (window.pdfjsLib) {
+                    rotatePdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    rotatePageCount = rotatePdfDoc.numPages;
+                } else {
+                    rotatePageCount = await getPageCount(file) || 0;
+                }
+
+                document.getElementById('rotatePageCount').textContent = rotatePageCount + 'ページ';
+
+                for (let i = 1; i <= rotatePageCount; i++) {
+                    pageRotations[i] = 0;
+                }
+
+                updateRotateSummaryCounts();
+
+                document.getElementById('rotateToolbar').style.display = 'block';
+                document.getElementById('rotatePagesContainer').style.display = 'block';
+                document.getElementById('rotateSubmitBtn').style.display = 'inline-block';
+
+                renderRotateGrid();
+            } catch (err) {
+                console.error('Error loading PDF for rotate:', err);
+                showClientError(errorContainer, ['PDFファイルの解析に失敗しました: ' + (err.message || '不明なエラー')]);
+            }
+        }
+
+        function clearRotateFile(e) {
+            if (e) e.stopPropagation();
+            rotateFile = null;
+            rotatePdfDoc = null;
+            rotatePageCount = 0;
+            pageRotations = {};
+
+            const fileInput = document.getElementById('pdfFileRotateInput');
+            if (fileInput) fileInput.value = '';
+
+            const dropText = document.getElementById('rotateDropZoneText');
+            if (dropText) dropText.style.display = 'block';
+
+            document.getElementById('rotateSingleFileList').innerHTML = '';
+            document.getElementById('rotateSummary').style.display = 'none';
+            document.getElementById('rotateToolbar').style.display = 'none';
+            document.getElementById('rotatePagesContainer').style.display = 'none';
+            document.getElementById('rotateSubmitBtn').style.display = 'none';
+            document.getElementById('rotatePagesGrid').innerHTML = '';
+            showClientError('rotateClientError', []);
+        }
+
+        function renderRotateGrid() {
+            const grid = document.getElementById('rotatePagesGrid');
+            grid.innerHTML = '';
+
+            for (let pageNo = 1; pageNo <= rotatePageCount; pageNo++) {
+                const card = document.createElement('div');
+                card.className = 'rotate-page-card';
+                card.id = `rotateCard_${pageNo}`;
+
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="page-num">P.${pageNo}</span>
+                        <span class="angle-badge" id="angleBadge_${pageNo}">0°</span>
+                    </div>
+                    <div class="thumb-container" onclick="rotatePage(${pageNo}, 90)" title="クリックで時計回りに90度回転">
+                        <div class="canvas-wrap" id="canvasWrap_${pageNo}">
+                            <canvas id="thumbCanvas_${pageNo}"></canvas>
+                        </div>
+                    </div>
+                    <div class="card-actions">
+                        <button type="button" class="card-btn" onclick="rotatePage(${pageNo}, -90)" title="左90°回転">↺ 90°</button>
+                        <button type="button" class="card-btn" onclick="rotatePage(${pageNo}, 90)" title="右90°回転">↻ 90°</button>
+                        <button type="button" class="card-btn-reset" onclick="setPageAngle(${pageNo}, 0)" title="リセット">0°</button>
+                    </div>
+                `;
+                grid.appendChild(card);
+
+                if (rotatePdfDoc) {
+                    renderPageThumbnail(pageNo);
+                }
+            }
+        }
+
+        async function renderPageThumbnail(pageNo) {
+            try {
+                const page = await rotatePdfDoc.getPage(pageNo);
+                const baseViewport = page.getViewport({ scale: 1.0 });
+                const targetWidth = 140;
+                const scale = targetWidth / baseViewport.width;
+                const viewport = page.getViewport({ scale: scale });
+
+                const canvas = document.getElementById(`thumbCanvas_${pageNo}`);
+                if (!canvas) return;
+
+                const context = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: viewport
+                };
+                await page.render(renderContext).promise;
+            } catch (err) {
+                console.warn(`Thumbnail render failed for page ${pageNo}:`, err);
+            }
+        }
+
+        function rotatePage(pageNo, delta) {
+            const current = pageRotations[pageNo] || 0;
+            const next = ((current + delta) % 360 + 360) % 360;
+            setPageAngle(pageNo, next);
+        }
+
+        function setPageAngle(pageNo, angle) {
+            angle = ((angle % 360) + 360) % 360;
+            pageRotations[pageNo] = angle;
+            updatePageCardUI(pageNo, angle);
+            updateRotateSummaryCounts();
+        }
+
+        function updatePageCardUI(pageNo, angle) {
+            const wrap = document.getElementById(`canvasWrap_${pageNo}`);
+            const badge = document.getElementById(`angleBadge_${pageNo}`);
+            const card = document.getElementById(`rotateCard_${pageNo}`);
+
+            if (wrap) {
+                wrap.style.transform = `rotate(${angle}deg)`;
+            }
+
+            if (badge) {
+                badge.textContent = `${angle}°`;
+                if (angle !== 0) {
+                    badge.classList.add('rotated');
+                } else {
+                    badge.classList.remove('rotated');
+                }
+            }
+
+            if (card) {
+                if (angle !== 0) {
+                    card.classList.add('is-rotated');
+                } else {
+                    card.classList.remove('is-rotated');
+                }
+            }
+        }
+
+        function rotateAllPages(delta) {
+            for (let i = 1; i <= rotatePageCount; i++) {
+                rotatePage(i, delta);
+            }
+        }
+
+        function resetAllRotations() {
+            for (let i = 1; i <= rotatePageCount; i++) {
+                setPageAngle(i, 0);
+            }
+        }
+
+        function rotateRangePages(delta) {
+            const input = document.getElementById('rotateRangeInput');
+            const rangeStr = input ? input.value.trim() : '';
+            if (!rangeStr) {
+                alert('回転するページ番号を入力してください。（例: 1, 3-5, 8）');
+                return;
+            }
+
+            const pageNumbers = parsePageRange(rangeStr, rotatePageCount);
+            if (pageNumbers.length === 0) {
+                alert('有効なページ番号が見つかりませんでした。範囲をご確認ください。');
+                return;
+            }
+
+            for (const p of pageNumbers) {
+                rotatePage(p, delta);
+            }
+        }
+
+        function parsePageRange(rangeStr, maxPage) {
+            const pages = new Set();
+            const parts = rangeStr.split(',');
+            for (let part of parts) {
+                part = part.trim();
+                if (part.includes('-')) {
+                    const rangeParts = part.split('-');
+                    const s = parseInt(rangeParts[0].trim(), 10);
+                    const e = parseInt(rangeParts[1].trim(), 10);
+                    if (!isNaN(s) && !isNaN(e) && s > 0 && e >= s) {
+                        for (let i = s; i <= Math.min(e, maxPage); i++) {
+                            pages.add(i);
+                        }
+                    }
+                } else {
+                    const num = parseInt(part, 10);
+                    if (!isNaN(num) && num > 0 && num <= maxPage) {
+                        pages.add(num);
+                    }
+                }
+            }
+            return Array.from(pages).sort((a, b) => a - b);
+        }
+
+        function updateRotateSummaryCounts() {
+            let rotatedCount = 0;
+            for (let i = 1; i <= rotatePageCount; i++) {
+                if ((pageRotations[i] || 0) !== 0) {
+                    rotatedCount++;
+                }
+            }
+            const targetVal = document.getElementById('rotateTargetCount');
+            if (targetVal) {
+                targetVal.textContent = `${rotatedCount} / ${rotatePageCount}ページ`;
+            }
+        }
+
+        function submitRotateForm() {
+            if (!rotateFile) {
+                showClientError('rotateClientError', ['回転するPDFファイルを選択してください。']);
+                return;
+            }
+
+            const jsonInput = document.getElementById('rotationsJsonInput');
+            jsonInput.value = JSON.stringify(pageRotations);
+
+            const actualInput = document.getElementById('actualRotateFileInput');
+            const dt = new DataTransfer();
+            dt.items.add(rotateFile);
+            actualInput.files = dt.files;
+
+            const submitBtn = document.getElementById('rotateSubmitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '回転処理中...';
+
+            document.getElementById('rotateForm').submit();
         }
     </script>
 </body>

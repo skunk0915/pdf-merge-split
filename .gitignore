@@ -17,3 +17,6 @@ logs/
 
 # Generated Font Metrics Cache
 vendor/setasign/tfpdf/font/unifont/ipag*
+
+# Tsunagi のチャット記録（会話中に貼った内容が入るため公開リポジトリには含めない）
+docs/chat_history/

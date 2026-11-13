@@ -144,3 +144,11 @@ AI: テキストファイル（.txt）に対する回転機能（回転ボタン
 - css/style.css.map
 - index.php
 - scss/style.scss
+
+2026-11-13 12:49:07
+USER: pdf分割ボタン推しても何も起きない　https://pdf-merge-split.162.43.39.238.sslip.io/
+AI: 分割フォーム送信時に送信ボタン（#splitSubmitBtn）が即座にdisabled化されることで、ブラウザ仕様により送信パラメータから「split」が欠落し、サーバー側で分割処理に入らず画面が初期表示に戻っていた不具合を修正しました。フォーム内に隠しフィールド（name="split" value="1"）を明示配置し、ボタンのdisabled化も非同期遅延実行（setTimeout）にして確実な送信を担保しました。あわせて、処理実行後にページが再読み込みされた際も操作中の対象タブ（「PDF分割・抽出」や「PDF回転」）をアクティブなまま維持するよう改善し、本番環境（Xserver VPS）へデプロイして動作確認を完了しました。
+編集したファイルパス:
+- README.md
+- chat.txt
+- index.php

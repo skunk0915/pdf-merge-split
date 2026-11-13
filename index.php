@@ -287,9 +287,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST) && empty($_FILES) && 
 }
 
 // フォーム送信時の処理
+$activeTab = 'merge';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // PDFの結合処理（ページ単位回転対応）
     if (isset($_POST['merge'])) {
+        $activeTab = 'merge';
         if (!empty($_FILES['pdfFiles']['name'][0])) {
             $expectedCount = isset($_POST['expected_count']) ? (int)$_POST['expected_count'] : null;
             $fileRotations = isset($_POST['file_rotations']) ? $_POST['file_rotations'] : null;
@@ -308,6 +310,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     // PDFの分割処理（ページ単位回転対応）
     if (isset($_POST['split'])) {
+        $activeTab = 'split';
         if (!empty($_FILES['pdfFile']['name'])) {
             $pages = isset($_POST['pages']) ? trim($_POST['pages']) : '';
             $splitRotations = isset($_POST['split_rotations']) ? $_POST['split_rotations'] : null;
@@ -326,6 +329,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // PDF・画像の回転処理
     if (isset($_POST['rotate'])) {
+        $activeTab = 'rotate';
         if (!empty($_FILES['pdfFileRotate']['name'])) {
             $rotations = isset($_POST['rotations']) ? $_POST['rotations'] : '';
             $result = rotatePdf($_FILES['pdfFileRotate'], $rotations);
@@ -916,13 +920,13 @@ function cleanupFiles($dir) {
     
     <div class="container">
         <div class="tab">
-            <button class="tablinks active" onclick="openTab(event, 'merge')">PDF結合・変換</button>
-            <button class="tablinks" onclick="openTab(event, 'split')">PDF分割・抽出</button>
-            <button class="tablinks" onclick="openTab(event, 'rotate')">PDF回転</button>
+            <button class="tablinks <?php echo $activeTab === 'merge' ? 'active' : ''; ?>" onclick="openTab(event, 'merge')">PDF結合・変換</button>
+            <button class="tablinks <?php echo $activeTab === 'split' ? 'active' : ''; ?>" onclick="openTab(event, 'split')">PDF分割・抽出</button>
+            <button class="tablinks <?php echo $activeTab === 'rotate' ? 'active' : ''; ?>" onclick="openTab(event, 'rotate')">PDF回転</button>
         </div>
         
         <!-- PDF結合タブ -->
-        <div id="merge" class="tabcontent" style="display: block;">
+        <div id="merge" class="tabcontent" style="display: <?php echo $activeTab === 'merge' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="mergeForm">
                 <div class="limit-badge">上限: 最大100ファイル / 合計200MB / 1ファイル100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
                 <label for="pdfFileAdd">ファイルを選択（PDF・画像・テキスト / 複数可）:</label>
@@ -967,7 +971,7 @@ function cleanupFiles($dir) {
         </div>
         
         <!-- PDF分割タブ -->
-        <div id="split" class="tabcontent">
+        <div id="split" class="tabcontent" style="display: <?php echo $activeTab === 'split' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="splitForm">
                 <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
                 <label for="pdfFile">ファイルを選択（PDF・画像・テキスト）:</label>
@@ -1025,13 +1029,14 @@ function cleanupFiles($dir) {
                    ※ ハイフンで範囲指定もできます（例: 1-5,7-9）<br>
                    ※ 1ファイルあたり最大100MBまでアップロード可能です。</p>
                 
+                <input type="hidden" name="split" value="1">
                 <input type="hidden" name="split_rotations" id="splitRotationsInput" value="{}">
                 <button type="submit" name="split" id="splitSubmitBtn" class="submit-button">PDFを分割</button>
             </form>
         </div>
         
         <!-- PDF回転タブ -->
-        <div id="rotate" class="tabcontent">
+        <div id="rotate" class="tabcontent" style="display: <?php echo $activeTab === 'rotate' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="rotateForm">
                 <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP）</div>
                 <label for="pdfFileRotateInput">ファイルを選択（PDF・画像）:</label>
@@ -2225,8 +2230,10 @@ function cleanupFiles($dir) {
             document.getElementById('splitRotationsInput').value = JSON.stringify(splitRotations);
             const submitBtn = document.getElementById('splitSubmitBtn');
             if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.textContent = '分割・抽出処理中...';
+                setTimeout(function() {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = '分割・抽出処理中...';
+                }, 0);
             }
         });
 

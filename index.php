@@ -994,17 +994,18 @@ function cleanupFiles($dir) {
                     <?php if (!empty($downloadLink)): ?>
                         <?php
                             $linkExt = strtolower(pathinfo($downloadLink, PATHINFO_EXTENSION));
+                            $downloadFileName = basename($downloadLink);
                             if ($linkExt === 'zip') {
-                                $btnLabel = '📦 分割PDFを一括ダウンロード（ZIP形式）';
+                                $btnLabel = '📦 分割PDFを一括ダウンロード (' . $downloadFileName . ')';
                             } elseif ($activeTab === 'merge') {
-                                $btnLabel = '📄 結合したPDFをダウンロード';
+                                $btnLabel = '📄 結合したPDFをダウンロード (' . $downloadFileName . ')';
                             } elseif ($activeTab === 'rotate') {
-                                $btnLabel = '📄 回転したPDFをダウンロード';
+                                $btnLabel = '📄 回転したPDFをダウンロード (' . $downloadFileName . ')';
                             } else {
-                                $btnLabel = '📄 抽出したPDFをダウンロード';
+                                $btnLabel = '📄 抽出したPDFをダウンロード (' . $downloadFileName . ')';
                             }
                         ?>
-                        <a href="<?php echo htmlspecialchars($downloadLink, ENT_QUOTES, 'UTF-8'); ?>" class="download-link" download><?php echo $btnLabel; ?></a>
+                        <a href="<?php echo htmlspecialchars($downloadLink, ENT_QUOTES, 'UTF-8'); ?>" class="download-link" download="<?php echo htmlspecialchars($downloadFileName, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($btnLabel, ENT_QUOTES, 'UTF-8'); ?></a>
                     <?php endif; ?>
                 </div>
                 <button type="button" class="message-close-btn" onclick="clearServerResult()" title="閉じる">&times;</button>

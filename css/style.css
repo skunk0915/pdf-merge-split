@@ -1051,22 +1051,24 @@ button:disabled, .submit-button:disabled {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .split-preview-section .split-boundary-btn.is-split .boundary-line {
-  border-top: 2px dashed #cbd5e1;
+  border-top: 2px dashed #f97316;
 }
 .split-preview-section .split-boundary-btn.is-split .boundary-badge {
-  background-color: #ffffff;
-  color: #64748b;
-  border: 1px solid #cbd5e1;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background-color: #fff7ed;
+  color: #ea580c;
+  border: 1.5px solid #f97316;
+  box-shadow: 0 1px 4px rgba(249, 115, 22, 0.25);
+  font-weight: bold;
 }
 .split-preview-section .split-boundary-btn.is-split:hover .boundary-badge {
-  background-color: #2563eb;
+  background-color: #ea580c;
   color: #ffffff;
-  border-color: #2563eb;
-  transform: scale(1.15);
+  border-color: #c2410c;
+  transform: scale(1.2);
+  box-shadow: 0 2px 6px rgba(234, 88, 12, 0.4);
 }
 .split-preview-section .split-boundary-btn.is-split:hover .boundary-line {
-  border-top: 2px solid #2563eb;
+  border-top: 2px solid #ea580c;
 }
 .split-preview-section .split-boundary-btn.is-connected .boundary-line {
   background-color: #2563eb;

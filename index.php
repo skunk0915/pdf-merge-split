@@ -1037,12 +1037,16 @@ function cleanupFiles($dir) {
             <form action="" method="post" enctype="multipart/form-data" id="splitForm">
                 <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
                 <label for="pdfFile">ファイルを選択（PDF・画像・テキスト）:</label>
-                <input type="file" name="pdfFile" id="pdfFile" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" required onchange="onSplitFileChange(this)">
+                <input type="file" name="pdfFile" id="pdfFile" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" onchange="onSplitFileChange(this)">
+                <button type="button" class="add-button" onclick="document.getElementById('pdfFile').click()">ファイルを選択</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="splitClientError" class="client-error-box"></div>
                 
-                <div id="singleFileList" class="file-list"></div>
+                <div id="splitDropZone" class="drop-zone">
+                    <div id="splitDropZoneText" class="drop-zone-text">ここにPDF・画像・テキストファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
+                    <div id="singleFileList" class="file-list"></div>
+                </div>
                 
                 <!-- リアルタイムサマリー表示領域 -->
                 <div id="splitSummary" class="summary-container" style="display: none;">
@@ -2051,13 +2055,13 @@ function cleanupFiles($dir) {
             const fileSizeVal = document.getElementById('splitFileSize');
             const previewSection = document.getElementById('splitPreviewSection');
 
-            displayFileNames('pdfFile', 'singleFileList');
-
             if (input.files && input.files[0]) {
                 const file = input.files[0];
                 const ext = getFileExtension(file.name);
 
                 if (!ALLOWED_MERGE_EXTS.includes(ext)) {
+                    splitFile = null;
+                    renderSplitFileList();
                     showClientError(errorContainer, ['対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。']);
                     submitBtn.disabled = true;
                     if (quickAction) quickAction.style.display = 'none';
@@ -2067,6 +2071,8 @@ function cleanupFiles($dir) {
                 }
 
                 if (file.size > MAX_SINGLE_FILE_SIZE) {
+                    splitFile = null;
+                    renderSplitFileList();
                     showClientError(errorContainer, [
                         `ファイル「${file.name}」のサイズ（${formatFileSize(file.size)}）が上限（100MB）を超えています。100MB以下のファイルを選択してください。`
                     ]);
@@ -2081,6 +2087,8 @@ function cleanupFiles($dir) {
                 splitRotations = {};
                 splitSelectedPages = new Set();
                 splitConnections = new Set(); // 初期状態はすべて切り離し（1ページずつ個別分割）
+                renderSplitFileList();
+
                 submitBtn.disabled = false;
                 summaryDiv.style.display = 'flex';
                 fileSizeVal.textContent = formatFileSize(file.size);
@@ -2126,15 +2134,77 @@ function cleanupFiles($dir) {
 
                 } catch (err) {
                     console.error('Error loading file for split:', err);
+                    splitFile = null;
+                    renderSplitFileList();
                     if (quickAction) quickAction.style.display = 'none';
                     showClientError(errorContainer, ['ファイルの解析に失敗しました: ' + (err.message || '不明なエラー')]);
                 }
             } else {
+                splitFile = null;
+                renderSplitFileList();
                 if (quickAction) quickAction.style.display = 'none';
                 summaryDiv.style.display = 'none';
                 previewSection.style.display = 'none';
                 submitBtn.disabled = false;
             }
+        }
+
+        // 分割対象ファイルの表示描画
+        function renderSplitFileList() {
+            const singleList = document.getElementById('singleFileList');
+            const dropText = document.getElementById('splitDropZoneText');
+            if (!singleList) return;
+
+            if (splitFile) {
+                if (dropText) dropText.style.display = 'none';
+                const ext = getFileExtension(splitFile.name);
+                const typeInfo = getFileTypeInfo(ext);
+
+                singleList.innerHTML = `
+                    <div class="file-item">
+                        <div class="file-item-header">
+                            <span class="file-type-badge type-${typeInfo.type}">${typeInfo.label}</span>
+                            <span class="file-name" title="${escapeHtml(splitFile.name)}">${escapeHtml(splitFile.name)}</span>
+                            <span class="file-size">${formatFileSize(splitFile.size)}</span>
+                            <span class="remove" onclick="clearSplitFile(event)" title="ファイルを削除">&times;</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                if (dropText) dropText.style.display = 'block';
+                singleList.innerHTML = '';
+            }
+        }
+
+        // 分割対象ファイルのクリア（削除）
+        function clearSplitFile(e) {
+            if (e) e.stopPropagation();
+            clearServerResult();
+            splitFile = null;
+            splitPdfDoc = null;
+            splitPageCount = 0;
+            splitRotations = {};
+            splitSelectedPages = new Set();
+            splitConnections = new Set();
+
+            const input = document.getElementById('pdfFile');
+            if (input) input.value = '';
+
+            renderSplitFileList();
+
+            const summaryDiv = document.getElementById('splitSummary');
+            if (summaryDiv) summaryDiv.style.display = 'none';
+
+            const quickAction = document.getElementById('splitQuickAction');
+            if (quickAction) quickAction.style.display = 'none';
+
+            const previewSection = document.getElementById('splitPreviewSection');
+            if (previewSection) previewSection.style.display = 'none';
+
+            const pagesInput = document.getElementById('pages');
+            if (pagesInput) pagesInput.value = '';
+
+            showClientError('splitClientError', []);
         }
 
         // 選択ページと連結状態からグループ配列（各グループが1出力ファイル）を算出
@@ -2541,6 +2611,11 @@ function cleanupFiles($dir) {
 
         // 分割フォーム送信前フック
         document.getElementById('splitForm')?.addEventListener('submit', function(e) {
+            if (!splitFile) {
+                e.preventDefault();
+                showClientError('splitClientError', ['分割するファイルを選択してください。']);
+                return;
+            }
             const groups = getSplitGroups();
             if (splitPageCount > 0 && groups.length === 0) {
                 e.preventDefault();
@@ -2873,6 +2948,44 @@ function cleanupFiles($dir) {
                     const dt = e.dataTransfer;
                     if (dt && dt.files) addFiles(dt.files);
                 }, false);
+                dropZone.addEventListener('click', function(e) {
+                    if (e.target.closest('.file-item') || e.target.closest('.remove')) return;
+                    document.getElementById('pdfFileAdd').click();
+                }, false);
+            }
+
+            const splitDropZone = document.getElementById('splitDropZone');
+            if (splitDropZone) {
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    splitDropZone.addEventListener(eventName, function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }, false);
+                });
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    splitDropZone.addEventListener(eventName, function() {
+                        splitDropZone.classList.add('drag-over');
+                    }, false);
+                });
+                ['dragleave', 'drop'].forEach(eventName => {
+                    splitDropZone.addEventListener(eventName, function() {
+                        splitDropZone.classList.remove('drag-over');
+                    }, false);
+                });
+                splitDropZone.addEventListener('drop', function(e) {
+                    const dt = e.dataTransfer;
+                    if (dt && dt.files && dt.files[0]) {
+                        const input = document.getElementById('pdfFile');
+                        const dataTransfer = new DataTransfer();
+                        dataTransfer.items.add(dt.files[0]);
+                        input.files = dataTransfer.files;
+                        onSplitFileChange(input);
+                    }
+                }, false);
+                splitDropZone.addEventListener('click', function(e) {
+                    if (e.target.closest('.remove')) return;
+                    document.getElementById('pdfFile').click();
+                }, false);
             }
 
             const rotateDropZone = document.getElementById('rotateDropZone');
@@ -2898,6 +3011,10 @@ function cleanupFiles($dir) {
                     if (dt && dt.files && dt.files[0]) {
                         setRotateFile(dt.files[0]);
                     }
+                }, false);
+                rotateDropZone.addEventListener('click', function(e) {
+                    if (e.target.closest('.remove')) return;
+                    document.getElementById('pdfFileRotateInput').click();
                 }, false);
             }
         });

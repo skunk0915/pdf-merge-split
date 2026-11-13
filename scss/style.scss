@@ -132,6 +132,11 @@ button[type="submit"]:hover {
     position: relative;
     min-height: 100px;
     transition: all 0.3s;
+    cursor: pointer;
+
+    .file-item {
+        cursor: default;
+    }
 }
 .drop-zone.drag-over {
     background-color: #e8f4fc;
@@ -339,7 +344,9 @@ button[type="submit"]:hover {
 .add-button:hover, .submit-button:hover {
     background-color: #2980b9;
 }
-input[name="pdfFileAdd"] {
+input[name="pdfFileAdd"],
+input[name="pdfFile"],
+#pdfFileRotateInput {
     display: none;
 }
 .file-type-badge {

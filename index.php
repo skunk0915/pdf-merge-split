@@ -316,7 +316,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $splitRotations = isset($_POST['split_rotations']) ? $_POST['split_rotations'] : null;
             $result = splitPdf($_FILES['pdfFile'], $pages, $splitRotations);
             if ($result['success']) {
-                $message = '分割が完了しました。（分割ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
+                $isZip = !empty($result['isZip']) || (strtolower(pathinfo($result['file'], PATHINFO_EXTENSION)) === 'zip');
+                if ($isZip) {
+                    $message = '分割が完了しました。各ページに分割したPDF（' . $result['fileCount'] . 'ファイル、合計' . $result['pageCount'] . 'ページ）をまとめたZIPファイルを生成しました。';
+                } else {
+                    $message = '抽出が完了しました。（ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
+                }
                 $downloadLink = $result['file'];
             } else {
                 $message = 'エラー: ' . $result['message'];
@@ -652,10 +657,10 @@ function splitPdf($file, $pages, $rotationsJson = null) {
         
         $splitFiles = [];
         $originalFilename = pathinfo($name, PATHINFO_FILENAME);
-        $singlePageMode = count($pageNumbers) > 1;
+        $isMultiPage = count($pageNumbers) > 1;
         $actualPageCount = 0;
         
-        if ($singlePageMode) {
+        if ($isMultiPage) {
             foreach ($pageNumbers as $pageNo) {
                 if ($pageNo <= $pageCount && $pageNo > 0) {
                     $pdf = new \setasign\Fpdi\Fpdi();
@@ -745,11 +750,13 @@ function splitPdf($file, $pages, $rotationsJson = null) {
         }
         writeLog("Split successful: {$name} -> {$actualPageCount} pages", "INFO");
         
+        $isZip = (strtolower(pathinfo($outputFile, PATHINFO_EXTENSION)) === 'zip');
         return [
             'success' => true,
             'file' => $outputFile,
-            'fileCount' => $singlePageMode ? count($splitFiles) : 1,
-            'pageCount' => $actualPageCount
+            'fileCount' => $isMultiPage ? count($splitFiles) : 1,
+            'pageCount' => $actualPageCount,
+            'isZip' => $isZip
         ];
     } catch (Exception $e) {
         @unlink($uploadPath);
@@ -1119,7 +1126,19 @@ function cleanupFiles($dir) {
             <?php echo $message; ?>
             <?php if (!empty($downloadLink)): ?>
                 <br>
-                <a href="<?php echo htmlspecialchars($downloadLink, ENT_QUOTES, 'UTF-8'); ?>" class="download-link" download>ダウンロード</a>
+                <?php
+                    $linkExt = strtolower(pathinfo($downloadLink, PATHINFO_EXTENSION));
+                    if ($linkExt === 'zip') {
+                        $btnLabel = '📦 分割PDFを一括ダウンロード（ZIP形式）';
+                    } elseif ($activeTab === 'merge') {
+                        $btnLabel = '📄 結合したPDFをダウンロード';
+                    } elseif ($activeTab === 'rotate') {
+                        $btnLabel = '📄 回転したPDFをダウンロード';
+                    } else {
+                        $btnLabel = '📄 抽出したPDFをダウンロード';
+                    }
+                ?>
+                <a href="<?php echo htmlspecialchars($downloadLink, ENT_QUOTES, 'UTF-8'); ?>" class="download-link" download><?php echo $btnLabel; ?></a>
             <?php endif; ?>
         </div>
     <?php endif; ?>

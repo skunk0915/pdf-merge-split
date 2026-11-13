@@ -1071,6 +1071,17 @@ function cleanupFiles($dir) {
                     <div id="splitGroupsPreview" class="groups-preview-list" style="display: none;"></div>
                 </div>
 
+                <!-- サマリー直下のクイック実行バー -->
+                <div id="splitQuickAction" class="split-quick-action">
+                    <div class="quick-action-info">
+                        <span class="quick-badge">設定確認</span>
+                        <span class="quick-text">ページ構成の確認・調整ができたら分割を実行してください</span>
+                    </div>
+                    <button type="submit" name="split" id="splitQuickSubmitBtn" class="submit-button split-submit-btn quick-submit-btn">
+                        ✂️ この設定でPDFを分割
+                    </button>
+                </div>
+
                 <!-- 分割プレビュー＆回転セクション -->
                 <div id="splitPreviewSection" class="split-preview-section" style="display: none;">
                     <div class="split-toolbar">
@@ -1102,7 +1113,7 @@ function cleanupFiles($dir) {
                 <input type="hidden" name="split" value="1">
                 <input type="hidden" name="split_rotations" id="splitRotationsInput" value="{}">
                 <input type="hidden" name="split_groups" id="splitGroupsInput" value="[]">
-                <button type="submit" name="split" id="splitSubmitBtn" class="submit-button">PDFを分割</button>
+                <button type="submit" name="split" id="splitSubmitBtn" class="submit-button split-submit-btn">PDFを分割</button>
             </form>
         </div>
         
@@ -1186,7 +1197,7 @@ function cleanupFiles($dir) {
     </div>
     
     <?php if (!empty($message)): ?>
-        <div class="message <?php echo strpos($message, 'エラー') !== false ? 'error' : 'success'; ?>">
+        <div class="message <?php echo strpos($message, 'エラー') !== false ? 'error' : 'success'; ?>" id="serverResultMessage">
             <?php echo $message; ?>
             <?php if (!empty($downloadLink)): ?>
                 <br>
@@ -1221,9 +1232,21 @@ function cleanupFiles($dir) {
         }
 
         // ==========================================
+        // サーバー結果表示（完了メッセージ・ダウンロードリンク）の消去
+        // ==========================================
+        function clearServerResult() {
+            const el = document.getElementById('serverResultMessage');
+            if (el) {
+                el.style.display = 'none';
+                el.innerHTML = '';
+            }
+        }
+
+        // ==========================================
         // タブ切り替え
         // ==========================================
         function openTab(evt, tabName) {
+            clearServerResult();
             var i, tabcontent, tablinks;
             tabcontent = document.getElementsByClassName("tabcontent");
             for (i = 0; i < tabcontent.length; i++) {
@@ -1421,6 +1444,7 @@ function cleanupFiles($dir) {
         let mergeFiles = [];
 
         async function addFiles(files) {
+            clearServerResult();
             if (!files || files.length === 0) return;
 
             const errorMessages = [];
@@ -1871,6 +1895,7 @@ function cleanupFiles($dir) {
         }
 
         function removeFile(index) {
+            clearServerResult();
             mergeFiles.splice(index, 1);
             updateFileList();
             updateMergeSummary();
@@ -2013,10 +2038,12 @@ function cleanupFiles($dir) {
         let splitConnections = new Set();   // 境界の連結状態（p in splitConnections なら P.p と P.p+1 は連結）
 
         async function onSplitFileChange(input) {
+            clearServerResult();
             const errorContainer = 'splitClientError';
             showClientError(errorContainer, []);
 
             const submitBtn = document.getElementById('splitSubmitBtn');
+            const quickAction = document.getElementById('splitQuickAction');
             const summaryDiv = document.getElementById('splitSummary');
             const pageCountVal = document.getElementById('splitPageCount');
             const selectedCountVal = document.getElementById('splitSelectedCount');
@@ -2033,6 +2060,7 @@ function cleanupFiles($dir) {
                 if (!ALLOWED_MERGE_EXTS.includes(ext)) {
                     showClientError(errorContainer, ['対応していないファイル形式です（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）。']);
                     submitBtn.disabled = true;
+                    if (quickAction) quickAction.style.display = 'none';
                     summaryDiv.style.display = 'none';
                     previewSection.style.display = 'none';
                     return;
@@ -2043,6 +2071,7 @@ function cleanupFiles($dir) {
                         `ファイル「${file.name}」のサイズ（${formatFileSize(file.size)}）が上限（100MB）を超えています。100MB以下のファイルを選択してください。`
                     ]);
                     submitBtn.disabled = true;
+                    if (quickAction) quickAction.style.display = 'none';
                     summaryDiv.style.display = 'none';
                     previewSection.style.display = 'none';
                     return;
@@ -2097,9 +2126,11 @@ function cleanupFiles($dir) {
 
                 } catch (err) {
                     console.error('Error loading file for split:', err);
+                    if (quickAction) quickAction.style.display = 'none';
                     showClientError(errorContainer, ['ファイルの解析に失敗しました: ' + (err.message || '不明なエラー')]);
                 }
             } else {
+                if (quickAction) quickAction.style.display = 'none';
                 summaryDiv.style.display = 'none';
                 previewSection.style.display = 'none';
                 submitBtn.disabled = false;
@@ -2278,6 +2309,7 @@ function cleanupFiles($dir) {
 
         // ページ回転
         function rotateSplitPage(pageNo, delta) {
+            clearServerResult();
             const current = splitRotations[pageNo] || 0;
             const next = ((current + delta) % 360 + 360) % 360;
             splitRotations[pageNo] = next;
@@ -2323,6 +2355,7 @@ function cleanupFiles($dir) {
 
         // UI全体の同期・更新処理
         function updateSplitUI(syncTextInput = true) {
+            clearServerResult();
             const groups = getSplitGroups();
             const pageGroupMap = getSplitPageGroupMap();
 
@@ -2436,6 +2469,31 @@ function cleanupFiles($dir) {
             if (groupsInput) {
                 groupsInput.value = JSON.stringify(groups);
             }
+
+            // クイックアクションバー＆分割ボタンの更新
+            const quickAction = document.getElementById('splitQuickAction');
+            const quickBtn = document.getElementById('splitQuickSubmitBtn');
+            const submitBtn = document.getElementById('splitSubmitBtn');
+
+            if (splitPageCount > 0 && groups.length > 0) {
+                if (quickAction) quickAction.style.display = 'flex';
+                if (quickBtn) {
+                    quickBtn.disabled = false;
+                    quickBtn.textContent = groups.length > 1 
+                        ? `✂️ この設定で分割（${groups.length}ファイルをZIPで生成）` 
+                        : `✂️ この設定で抽出（1ファイルを生成）`;
+                }
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = groups.length > 1 
+                        ? `PDFを分割（${groups.length}ファイルをZIPで生成）` 
+                        : `PDFを抽出`;
+                }
+            } else {
+                if (quickAction) quickAction.style.display = 'none';
+                if (quickBtn) quickBtn.disabled = true;
+                if (submitBtn) submitBtn.disabled = true;
+            }
         }
 
         // テキスト手入力時の同期
@@ -2494,13 +2552,13 @@ function cleanupFiles($dir) {
             // グループ情報をJSONセット
             document.getElementById('splitGroupsInput').value = JSON.stringify(groups);
 
-            const submitBtn = document.getElementById('splitSubmitBtn');
-            if (submitBtn) {
+            const submitBtns = document.querySelectorAll('.split-submit-btn');
+            submitBtns.forEach(btn => {
                 setTimeout(function() {
-                    submitBtn.disabled = true;
-                    submitBtn.textContent = '分割・抽出処理中...';
+                    btn.disabled = true;
+                    btn.textContent = '分割・抽出処理中...';
                 }, 0);
-            }
+            });
         });
 
         // 単一ファイル選択表示
@@ -2546,6 +2604,7 @@ function cleanupFiles($dir) {
         }
 
         async function setRotateFile(file) {
+            clearServerResult();
             const errorContainer = 'rotateClientError';
             showClientError(errorContainer, []);
 
@@ -2620,6 +2679,7 @@ function cleanupFiles($dir) {
         }
 
         function clearRotateFile(e) {
+            clearServerResult();
             if (e) e.stopPropagation();
             rotateFile = null;
             rotatePdfDoc = null;
@@ -2698,6 +2758,7 @@ function cleanupFiles($dir) {
         }
 
         function setPageAngle(pageNo, angle) {
+            clearServerResult();
             angle = ((angle % 360) + 360) % 360;
             pageRotations[pageNo] = angle;
             updatePageCardUI(pageNo, angle);

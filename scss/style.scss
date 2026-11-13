@@ -522,6 +522,81 @@ input[name="pdfFileAdd"] {
     }
 }
 
+/* 分割サマリー直下のクイック実行バー */
+.split-quick-action {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1.5px solid #93c5fd;
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin: 12px 0 16px 0;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.08);
+
+    @media (max-width: 640px) {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .quick-action-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+
+        .quick-badge {
+            background-color: #2563eb;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 12px;
+            letter-spacing: 0.02em;
+        }
+
+        .quick-text {
+            color: #1e40af;
+            font-size: 13.5px;
+            font-weight: 600;
+        }
+    }
+
+    .quick-submit-btn {
+        margin: 0;
+        padding: 10px 22px;
+        font-size: 14px;
+        font-weight: 700;
+        white-space: nowrap;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        border: none;
+        border-radius: 6px;
+        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+        color: #ffffff;
+        transition: all 0.2s ease;
+        cursor: pointer;
+
+        &:hover {
+            background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+            transform: translateY(-1px);
+        }
+
+        &:active {
+            transform: translateY(0);
+        }
+
+        &:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+    }
+}
+
 /* クライアントサイドのエラー通知領域（赤色ボックス） */
 .client-error-box {
     display: none;

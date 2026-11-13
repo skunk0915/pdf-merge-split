@@ -987,6 +987,30 @@ function cleanupFiles($dir) {
             <button class="tablinks <?php echo $activeTab === 'rotate' ? 'active' : ''; ?>" onclick="openTab(event, 'rotate')">PDF回転</button>
         </div>
         
+        <?php if (!empty($message)): ?>
+            <div class="message <?php echo strpos($message, 'エラー') !== false ? 'error' : 'success'; ?>" id="serverResultMessage">
+                <div class="message-content">
+                    <div class="message-text"><?php echo $message; ?></div>
+                    <?php if (!empty($downloadLink)): ?>
+                        <?php
+                            $linkExt = strtolower(pathinfo($downloadLink, PATHINFO_EXTENSION));
+                            if ($linkExt === 'zip') {
+                                $btnLabel = '📦 分割PDFを一括ダウンロード（ZIP形式）';
+                            } elseif ($activeTab === 'merge') {
+                                $btnLabel = '📄 結合したPDFをダウンロード';
+                            } elseif ($activeTab === 'rotate') {
+                                $btnLabel = '📄 回転したPDFをダウンロード';
+                            } else {
+                                $btnLabel = '📄 抽出したPDFをダウンロード';
+                            }
+                        ?>
+                        <a href="<?php echo htmlspecialchars($downloadLink, ENT_QUOTES, 'UTF-8'); ?>" class="download-link" download><?php echo $btnLabel; ?></a>
+                    <?php endif; ?>
+                </div>
+                <button type="button" class="message-close-btn" onclick="clearServerResult()" title="閉じる">&times;</button>
+            </div>
+        <?php endif; ?>
+        
         <!-- PDF結合タブ -->
         <div id="merge" class="tabcontent" style="display: <?php echo $activeTab === 'merge' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="mergeForm">
@@ -1205,28 +1229,6 @@ function cleanupFiles($dir) {
             </form>
         </div>
     </div>
-    
-    <?php if (!empty($message)): ?>
-        <div class="message <?php echo strpos($message, 'エラー') !== false ? 'error' : 'success'; ?>" id="serverResultMessage">
-            <?php echo $message; ?>
-            <?php if (!empty($downloadLink)): ?>
-                <br>
-                <?php
-                    $linkExt = strtolower(pathinfo($downloadLink, PATHINFO_EXTENSION));
-                    if ($linkExt === 'zip') {
-                        $btnLabel = '📦 分割PDFを一括ダウンロード（ZIP形式）';
-                    } elseif ($activeTab === 'merge') {
-                        $btnLabel = '📄 結合したPDFをダウンロード';
-                    } elseif ($activeTab === 'rotate') {
-                        $btnLabel = '📄 回転したPDFをダウンロード';
-                    } else {
-                        $btnLabel = '📄 抽出したPDFをダウンロード';
-                    }
-                ?>
-                <a href="<?php echo htmlspecialchars($downloadLink, ENT_QUOTES, 'UTF-8'); ?>" class="download-link" download><?php echo $btnLabel; ?></a>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
 
     <!-- プレビュー拡大モーダル -->
     <div id="previewModal" class="preview-modal" onclick="closePreviewModal(event)">

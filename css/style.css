@@ -103,41 +103,83 @@ button[type=submit]:hover {
 }
 
 .message {
-  padding: 15px 20px;
-  margin: 20px 0;
-  border-radius: 6px;
+  padding: 16px 20px;
+  margin: 16px 0 20px 0;
+  border-radius: 8px;
   font-size: 15px;
   line-height: 1.5;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+.message .message-content {
+  flex: 1;
+}
+.message .message-content .message-text {
+  line-height: 1.6;
+}
+.message .message-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: all 0.15s ease;
+}
+.message .message-close-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .success {
   background-color: #f0fdf4;
   color: #166534;
-  border: 1px solid #bbf7d0;
+  border: 1.5px solid #86efac;
   border-left: 6px solid #22c55e;
+}
+.success .message-close-btn {
+  color: #166534;
 }
 
 .error {
   background-color: #fef2f2;
   color: #991b1b;
-  border: 1px solid #fecaca;
+  border: 1.5px solid #fca5a5;
   border-left: 6px solid #dc2626;
-  font-weight: bold;
+  font-weight: 500;
+}
+.error .message-close-btn {
+  color: #991b1b;
 }
 
 .download-link {
-  display: inline-block;
-  background-color: #28a745;
-  color: white;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
   text-decoration: none;
-  padding: 10px 20px;
-  border-radius: 4px;
-  margin-top: 10px;
-  transition: background-color 0.3s;
+  padding: 12px 24px;
+  border-radius: 6px;
+  margin-top: 12px;
+  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.25);
+  transition: all 0.2s ease;
 }
-
 .download-link:hover {
-  background-color: #218838;
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%);
+  box-shadow: 0 6px 14px rgba(22, 163, 74, 0.35);
+  transform: translateY(-1px);
+}
+.download-link:active {
+  transform: translateY(0);
 }
 
 .note {

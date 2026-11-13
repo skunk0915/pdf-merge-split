@@ -991,15 +991,17 @@ function cleanupFiles($dir) {
         <div id="merge" class="tabcontent" style="display: <?php echo $activeTab === 'merge' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="mergeForm">
                 <div class="limit-badge">上限: 最大100ファイル / 合計200MB / 1ファイル100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
-                <label for="pdfFileAdd">ファイルを選択（PDF・画像・テキスト / 複数可）:</label>
+                <label>結合・変換するファイル（複数可）:</label>
                 <input type="file" name="pdfFileAdd" id="pdfFileAdd" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" multiple onchange="addFiles(this.files)">
-                <button type="button" class="add-button" onclick="document.getElementById('pdfFileAdd').click()">ファイルを追加</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="mergeClientError" class="client-error-box"></div>
                 
                 <div id="dropZone" class="drop-zone">
-                    <div class="drop-zone-text">ここにPDF・画像・テキストファイルをドラッグ＆ドロップ（またはファイルを追加ボタン）</div>
+                    <div class="drop-zone-text">
+                        ここにファイルをドラッグ＆ドロップ、または<span class="drop-zone-highlight">クリックして選択</span>（複数可）
+                        <span class="drop-zone-sub">対応形式: PDF, JPG, PNG, GIF, WebP, TXT</span>
+                    </div>
                     <div id="fileList" class="file-list sortable"></div>
                 </div>
                 <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。<br>
@@ -1036,15 +1038,17 @@ function cleanupFiles($dir) {
         <div id="split" class="tabcontent" style="display: <?php echo $activeTab === 'split' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="splitForm">
                 <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP, TXT）</div>
-                <label for="pdfFile">ファイルを選択（PDF・画像・テキスト）:</label>
+                <label>分割・抽出するファイル:</label>
                 <input type="file" name="pdfFile" id="pdfFile" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt" onchange="onSplitFileChange(this)">
-                <button type="button" class="add-button" onclick="document.getElementById('pdfFile').click()">ファイルを選択</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="splitClientError" class="client-error-box"></div>
                 
                 <div id="splitDropZone" class="drop-zone">
-                    <div id="splitDropZoneText" class="drop-zone-text">ここにPDF・画像・テキストファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
+                    <div id="splitDropZoneText" class="drop-zone-text">
+                        ここにファイルをドラッグ＆ドロップ、または<span class="drop-zone-highlight">クリックして選択</span>
+                        <span class="drop-zone-sub">対応形式: PDF, JPG, PNG, GIF, WebP, TXT</span>
+                    </div>
                     <div id="singleFileList" class="file-list"></div>
                 </div>
                 
@@ -1125,15 +1129,17 @@ function cleanupFiles($dir) {
         <div id="rotate" class="tabcontent" style="display: <?php echo $activeTab === 'rotate' ? 'block' : 'none'; ?>;">
             <form action="" method="post" enctype="multipart/form-data" id="rotateForm">
                 <div class="limit-badge">上限: 1ファイル最大100MB（対応形式: PDF, JPG, PNG, GIF, WebP）</div>
-                <label for="pdfFileRotateInput">ファイルを選択（PDF・画像）:</label>
+                <label>回転するファイル:</label>
                 <input type="file" id="pdfFileRotateInput" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp" onchange="onRotateFileChange(this)">
-                <button type="button" class="add-button" onclick="document.getElementById('pdfFileRotateInput').click()">ファイルを選択</button>
                 
                 <!-- クライアントサイドのエラー通知領域 -->
                 <div id="rotateClientError" class="client-error-box"></div>
                 
                 <div id="rotateDropZone" class="drop-zone">
-                    <div id="rotateDropZoneText" class="drop-zone-text">ここにPDFまたは画像ファイルをドラッグ＆ドロップ（またはファイルを選択ボタン）</div>
+                    <div id="rotateDropZoneText" class="drop-zone-text">
+                        ここにファイルをドラッグ＆ドロップ、または<span class="drop-zone-highlight">クリックして選択</span>
+                        <span class="drop-zone-sub">対応形式: PDF, JPG, PNG, GIF, WebP</span>
+                    </div>
                     <div id="rotateSingleFileList" class="file-list"></div>
                 </div>
                 <p class="note">※ 「PDF結合・変換」画面や「PDF分割・抽出」画面でも、ファイルをアップロードしたまま各ページを直接回転できます。</p>

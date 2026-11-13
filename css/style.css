@@ -148,14 +148,18 @@ button[type=submit]:hover {
 }
 
 .drop-zone {
-  margin: 10px 0;
+  margin: 12px 0 16px;
   border: 2px dashed #3498db;
-  border-radius: 6px;
+  border-radius: 8px;
   background-color: #f8fafc;
   position: relative;
-  min-height: 100px;
-  transition: all 0.3s;
+  min-height: 110px;
+  transition: all 0.2s ease;
   cursor: pointer;
+}
+.drop-zone:hover {
+  background-color: #f0f7ff;
+  border-color: #2563eb;
 }
 .drop-zone .file-item {
   cursor: default;
@@ -163,14 +167,29 @@ button[type=submit]:hover {
 
 .drop-zone.drag-over {
   background-color: #e8f4fc;
-  border-color: #2980b9;
+  border-color: #2563eb;
 }
 
 .drop-zone-text {
   text-align: center;
-  padding: 20px;
-  color: #7f8c8d;
-  font-size: 15px;
+  padding: 24px 20px;
+  color: #475569;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  user-select: none;
+}
+.drop-zone-text .drop-zone-highlight {
+  color: #2563eb;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.drop-zone-text .drop-zone-sub {
+  display: block;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: #94a3b8;
+  font-weight: 400;
 }
 
 .file-list {

@@ -1089,7 +1089,7 @@ function cleanupFiles($dir) {
                 <!-- 分割プレビュー＆回転セクション -->
                 <div id="splitPreviewSection" class="split-preview-section" style="display: none;">
                     <div class="split-toolbar">
-                        <span class="split-toolbar-title" id="splitToolbarTitle">ページ選択・連結 ＆ 回転（境界アイコンをクリックで連結/分割、サムネイルで90度回転）</span>
+                        <span class="split-toolbar-title" id="splitToolbarTitle">ページ選択・連結 ＆ 回転（サムネイルで拡大、境界アイコンで連結/分割、ボタンで回転）</span>
                         <div class="split-toolbar-group">
                             <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(true)">すべて選択</button>
                             <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(false)">選択解除</button>
@@ -1221,6 +1221,34 @@ function cleanupFiles($dir) {
             <?php endif; ?>
         </div>
     <?php endif; ?>
+
+    <!-- プレビュー拡大モーダル -->
+    <div id="previewModal" class="preview-modal" onclick="closePreviewModal(event)">
+        <div class="preview-modal-dialog" onclick="event.stopPropagation()">
+            <div class="preview-modal-header">
+                <div class="modal-header-info">
+                    <span id="previewModalTitle" class="modal-title">プレビュー拡大</span>
+                    <span id="previewModalBadge" class="modal-angle-badge">0°</span>
+                </div>
+                <div class="modal-header-actions">
+                    <button type="button" class="modal-tool-btn" onclick="rotatePreviewModal(-90)" title="左90度回転">↺ 左90°</button>
+                    <button type="button" class="modal-tool-btn" onclick="rotatePreviewModal(90)" title="右90度回転">↻ 右90°</button>
+                    <button type="button" class="preview-modal-close" onclick="closePreviewModal()" title="閉じる">&times;</button>
+                </div>
+            </div>
+            <div class="preview-modal-body">
+                <div id="previewModalContent" class="preview-modal-content"></div>
+            </div>
+            <div class="preview-modal-footer">
+                <div class="modal-footer-nav">
+                    <button type="button" class="modal-nav-btn" id="modalPrevBtn" onclick="navigatePreviewModal(-1)">◀ 前のページ</button>
+                    <span id="previewModalPageIndicator" class="modal-page-indicator">1 / 1</span>
+                    <button type="button" class="modal-nav-btn" id="modalNextBtn" onclick="navigatePreviewModal(1)">次のページ ▶</button>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closePreviewModal()">閉じる</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         // ==========================================
@@ -2179,6 +2207,7 @@ function cleanupFiles($dir) {
         // 分割対象ファイルのクリア（削除）
         function clearSplitFile(e) {
             if (e) e.stopPropagation();
+            closePreviewModal();
             clearServerResult();
             splitFile = null;
             splitPdfDoc = null;
@@ -2291,8 +2320,8 @@ function cleanupFiles($dir) {
             }
             if (toolbarTitle) {
                 toolbarTitle.textContent = isText 
-                    ? 'ページ選択・連結（境界アイコンをクリックで連結/分割）' 
-                    : 'ページ選択・連結 ＆ 回転（境界アイコンをクリックで連結/分割、サムネイルで90度回転）';
+                    ? 'ページ選択・連結（サムネイルで拡大、境界アイコンで連結/分割）' 
+                    : 'ページ選択・連結 ＆ 回転（サムネイルで拡大、境界アイコンで連結/分割、ボタンで回転）';
             }
 
             for (let pageNo = 1; pageNo <= splitPageCount; pageNo++) {
@@ -2312,7 +2341,7 @@ function cleanupFiles($dir) {
                         </label>
                         ${isText ? '' : `<span class="angle-badge ${angle !== 0 ? 'rotated' : ''}" id="splitAngleBadge_${pageNo}">${angle}°</span>`}
                     </div>
-                    <div class="split-thumb-wrap ${isText ? 'no-click' : ''}" ${isText ? '' : `onclick="rotateSplitPage(${pageNo}, 90)" title="クリックで右に90度回転"`}>
+                    <div class="split-thumb-wrap" onclick="openPreviewModal(${pageNo})" title="🔍 クリックでプレビュー拡大">
                         <div class="canvas-wrap" id="splitCanvasWrap_${pageNo}" style="transform: rotate(${angle}deg);">
                             ${isText
                                 ? `<div class="split-text-box">${escapeHtml(splitFile.textContent || '')}</div>`
@@ -2322,11 +2351,12 @@ function cleanupFiles($dir) {
                                 )
                             }
                         </div>
+                        <div class="thumb-zoom-badge">🔍 拡大</div>
                     </div>
                     ${isText ? '' : `
                     <div class="card-actions-row">
-                        <button type="button" class="split-rot-btn" onclick="rotateSplitPage(${pageNo}, -90)" title="左90°回転">↺ 90°</button>
-                        <button type="button" class="split-rot-btn" onclick="rotateSplitPage(${pageNo}, 90)" title="右90°回転">↻ 90°</button>
+                        <button type="button" class="split-rot-btn" onclick="event.stopPropagation(); rotateSplitPage(${pageNo}, -90);" title="左90°回転">↺ 90°</button>
+                        <button type="button" class="split-rot-btn" onclick="event.stopPropagation(); rotateSplitPage(${pageNo}, 90);" title="右90°回転">↻ 90°</button>
                     </div>
                     `}
                 `;
@@ -2607,6 +2637,129 @@ function cleanupFiles($dir) {
             splitSelectedPages = newSelected;
             splitConnections = newConnections;
             updateSplitUI(false);
+        }
+
+        // ==========================================
+        // プレビュー拡大モーダル
+        // ==========================================
+        let currentModalPage = 1;
+
+        async function openPreviewModal(pageNo) {
+            if (!splitFile || pageNo < 1 || pageNo > splitPageCount) return;
+            currentModalPage = pageNo;
+
+            const modal = document.getElementById('previewModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+
+            await renderPreviewModalContent();
+        }
+
+        function closePreviewModal(e) {
+            if (e && e.target && e.target.id !== 'previewModal' && !e.target.classList.contains('preview-modal-close') && !e.target.classList.contains('modal-close-btn')) {
+                return;
+            }
+            const modal = document.getElementById('previewModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+            document.body.style.overflow = '';
+        }
+
+        async function navigatePreviewModal(delta) {
+            const next = currentModalPage + delta;
+            if (next >= 1 && next <= splitPageCount) {
+                currentModalPage = next;
+                await renderPreviewModalContent();
+            }
+        }
+
+        function rotatePreviewModal(delta) {
+            rotateSplitPage(currentModalPage, delta);
+            const angle = splitRotations[currentModalPage] || 0;
+            const badge = document.getElementById('previewModalBadge');
+            const wrap = document.getElementById('modalContentWrap');
+            if (badge) {
+                badge.textContent = `${angle}°`;
+                if (angle !== 0) badge.classList.add('rotated');
+                else badge.classList.remove('rotated');
+            }
+            if (wrap) {
+                wrap.style.transform = `rotate(${angle}deg)`;
+            }
+        }
+
+        async function renderPreviewModalContent() {
+            const pageNo = currentModalPage;
+            const titleEl = document.getElementById('previewModalTitle');
+            const badgeEl = document.getElementById('previewModalBadge');
+            const indicatorEl = document.getElementById('previewModalPageIndicator');
+            const prevBtn = document.getElementById('modalPrevBtn');
+            const nextBtn = document.getElementById('modalNextBtn');
+            const container = document.getElementById('previewModalContent');
+
+            if (!container) return;
+
+            const angle = splitRotations[pageNo] || 0;
+            const ext = splitFile ? getFileExtension(splitFile.name) : 'pdf';
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+            const isText = (ext === 'txt');
+
+            if (titleEl) titleEl.textContent = `ページ ${pageNo} / ${splitPageCount}（${splitFile.name}）`;
+            if (badgeEl) {
+                if (isText) {
+                    badgeEl.style.display = 'none';
+                } else {
+                    badgeEl.style.display = 'inline-block';
+                    badgeEl.textContent = `${angle}°`;
+                    if (angle !== 0) badgeEl.classList.add('rotated');
+                    else badgeEl.classList.remove('rotated');
+                }
+            }
+            if (indicatorEl) indicatorEl.textContent = `${pageNo} / ${splitPageCount}`;
+            if (prevBtn) prevBtn.disabled = (pageNo <= 1);
+            if (nextBtn) nextBtn.disabled = (pageNo >= splitPageCount);
+
+            container.innerHTML = '<div style="color: #64748b; font-size: 14px; padding: 40px;">読み込み中...</div>';
+
+            if (isText) {
+                container.innerHTML = `
+                    <div class="modal-text-box">${escapeHtml(splitFile.textContent || '')}</div>
+                `;
+            } else if (isImage) {
+                const imgUrl = URL.createObjectURL(splitFile);
+                container.innerHTML = `
+                    <div id="modalContentWrap" style="transform: rotate(${angle}deg); transition: transform 0.2s ease;">
+                        <img src="${imgUrl}" alt="ページ ${pageNo}">
+                    </div>
+                `;
+            } else {
+                // PDF - 高解像度でレンダリング
+                const canvas = document.createElement('canvas');
+                canvas.id = 'modalCanvas';
+                container.innerHTML = `
+                    <div id="modalContentWrap" style="transform: rotate(${angle}deg); transition: transform 0.2s ease;"></div>
+                `;
+                container.querySelector('#modalContentWrap').appendChild(canvas);
+
+                if (splitPdfDoc) {
+                    try {
+                        const page = await splitPdfDoc.getPage(pageNo);
+                        const baseViewport = page.getViewport({ scale: 1.0 });
+                        const targetWidth = Math.min(800, window.innerWidth - 80);
+                        const scale = Math.max(1.5, targetWidth / baseViewport.width);
+                        const viewport = page.getViewport({ scale: scale });
+                        const context = canvas.getContext('2d');
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                    } catch (e) {
+                        console.error('Modal render error:', e);
+                        container.innerHTML = '<div style="color: #ef4444; padding: 40px;">プレビューの描画に失敗しました</div>';
+                    }
+                }
+            }
         }
 
         // 分割フォーム送信前フック
@@ -3017,6 +3170,20 @@ function cleanupFiles($dir) {
                     document.getElementById('pdfFileRotateInput').click();
                 }, false);
             }
+
+            // 拡大プレビューモーダルのキーボードショートカット
+            document.addEventListener('keydown', function(e) {
+                const modal = document.getElementById('previewModal');
+                if (!modal || modal.style.display !== 'flex') return;
+
+                if (e.key === 'Escape') {
+                    closePreviewModal();
+                } else if (e.key === 'ArrowLeft') {
+                    navigatePreviewModal(-1);
+                } else if (e.key === 'ArrowRight') {
+                    navigatePreviewModal(1);
+                }
+            });
         });
     </script>
 </body>

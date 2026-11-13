@@ -308,19 +308,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // PDFの分割処理（ページ単位回転対応）
+    // PDFの分割処理（ページ単位回転・連結分割対応）
     if (isset($_POST['split'])) {
         $activeTab = 'split';
         if (!empty($_FILES['pdfFile']['name'])) {
             $pages = isset($_POST['pages']) ? trim($_POST['pages']) : '';
             $splitRotations = isset($_POST['split_rotations']) ? $_POST['split_rotations'] : null;
-            $result = splitPdf($_FILES['pdfFile'], $pages, $splitRotations);
+            $splitGroups = isset($_POST['split_groups']) ? $_POST['split_groups'] : null;
+            $result = splitPdf($_FILES['pdfFile'], $pages, $splitRotations, $splitGroups);
             if ($result['success']) {
                 $isZip = !empty($result['isZip']) || (strtolower(pathinfo($result['file'], PATHINFO_EXTENSION)) === 'zip');
                 if ($isZip) {
-                    $message = '分割が完了しました。各ページに分割したPDF（' . $result['fileCount'] . 'ファイル、合計' . $result['pageCount'] . 'ページ）をまとめたZIPファイルを生成しました。';
+                    $message = '分割が完了しました。各グループに分割したPDF（' . $result['fileCount'] . 'ファイル、合計' . $result['pageCount'] . 'ページ）をまとめたZIPファイルを生成しました。';
                 } else {
-                    $message = '抽出が完了しました。（ファイル数: ' . $result['fileCount'] . '、合計ページ数: ' . $result['pageCount'] . 'ページ）';
+                    $message = '抽出・分割が完了しました。（1ファイル、合計' . $result['pageCount'] . 'ページ）';
                 }
                 $downloadLink = $result['file'];
             } else {
@@ -548,14 +549,75 @@ function mergePdfs($files, $expectedCount = null, $fileRotationsJson = null) {
 }
 
 /**
- * PDFファイルを指定されたページで分割する（ページ単位回転・画像/テキスト対応）
+ * ページ配列からファイル名用ラベルを生成（例: [1,2,3] -> p1-3, [4] -> p4, [1,3] -> p1_3）
+ * 
+ * @param array $pages
+ * @return string
+ */
+function formatPageListToLabel(array $pages) {
+    sort($pages, SORT_NUMERIC);
+    $pages = array_values(array_unique($pages));
+    if (empty($pages)) return 'p0';
+
+    $ranges = [];
+    $start = $pages[0];
+    $end = $pages[0];
+
+    for ($i = 1; $i < count($pages); $i++) {
+        if ($pages[$i] === $end + 1) {
+            $end = $pages[$i];
+        } else {
+            $ranges[] = ($start === $end) ? "p{$start}" : "p{$start}-{$end}";
+            $start = $pages[$i];
+            $end = $pages[$i];
+        }
+    }
+    $ranges[] = ($start === $end) ? "p{$start}" : "p{$start}-{$end}";
+    return implode('_', $ranges);
+}
+
+/**
+ * カンマやハイフンを含む単一グループ文字列を展開（例: "1,3-5" -> [1, 3, 4, 5]）
+ * 
+ * @param string $str
+ * @param int $maxPage
+ * @return array
+ */
+function parseSingleGroupPages($str, $maxPage = 999999) {
+    $pages = [];
+    $parts = explode(',', $str);
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if (empty($part)) continue;
+        if (strpos($part, '-') !== false) {
+            $range = explode('-', $part);
+            $start = (int)trim($range[0] ?? 0);
+            $end = (int)trim($range[1] ?? 0);
+            if ($start > 0 && $end >= $start) {
+                for ($i = $start; $i <= min($end, $maxPage); $i++) {
+                    $pages[] = $i;
+                }
+            }
+        } else {
+            $num = (int)$part;
+            if ($num > 0 && $num <= $maxPage) {
+                $pages[] = $num;
+            }
+        }
+    }
+    return array_values(array_unique($pages));
+}
+
+/**
+ * PDFファイルを指定されたページ・グループで分割する（ページ単位回転・連結分割・画像/テキスト対応）
  * 
  * @param array $file アップロードされたファイル情報
- * @param string $pages 分割するページ番号（例: "1,3-5,7"）
+ * @param string $pages 分割するページ番号（例: "1-3 / 4-6 / 7 / 8 / 9 / 10"）
  * @param string|array|null $rotationsJson ページごとの回転角度情報
+ * @param string|array|null $groupsJson グループ化指定（例: [[1,2,3], [4,5,6], [7]]）
  * @return array 処理結果
  */
-function splitPdf($file, $pages, $rotationsJson = null) {
+function splitPdf($file, $pages, $rotationsJson = null, $groupsJson = null) {
     global $uploadDir, $outputDir;
     
     if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
@@ -616,146 +678,139 @@ function splitPdf($file, $pages, $rotationsJson = null) {
         $tempPdf = new \setasign\Fpdi\Fpdi();
         $pageCount = $tempPdf->setSourceFile($sourceFile);
         
-        $pageNumbers = [];
-        if (!empty($pages)) {
-            $parts = explode(',', $pages);
-            foreach ($parts as $part) {
-                $part = trim($part);
-                if (strpos($part, '-') !== false) {
-                    $range = explode('-', $part);
-                    $start = (int)trim($range[0] ?? 0);
-                    $end = (int)trim($range[1] ?? 0);
-                    if ($start > 0 && $end >= $start) {
-                        for ($i = $start; $i <= $end; $i++) {
-                            $pageNumbers[] = $i;
+        // グループ情報の解決
+        $groups = [];
+        if (!empty($groupsJson)) {
+            $decoded = is_array($groupsJson) ? $groupsJson : json_decode($groupsJson, true);
+            if (is_array($decoded) && !empty($decoded)) {
+                foreach ($decoded as $grp) {
+                    if (is_array($grp)) {
+                        $validG = [];
+                        foreach ($grp as $p) {
+                            $p = (int)$p;
+                            if ($p >= 1 && $p <= $pageCount && !in_array($p, $validG, true)) {
+                                $validG[] = $p;
+                            }
                         }
-                    } else {
-                        @unlink($uploadPath);
-                        if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
-                        return ['success' => false, 'message' => "ページ範囲指定が無効です: 「{$part}」"];
+                        if (!empty($validG)) {
+                            $groups[] = $validG;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // groupsJson が無ければ pages 文字列からパース
+        if (empty($groups)) {
+            if (!empty($pages)) {
+                if (strpos($pages, '/') !== false || strpos($pages, ';') !== false) {
+                    $segments = preg_split('#[/;]#', $pages);
+                    foreach ($segments as $seg) {
+                        $parsed = parseSingleGroupPages($seg, $pageCount);
+                        if (!empty($parsed)) {
+                            $groups[] = $parsed;
+                        }
                     }
                 } else {
-                    $num = (int)$part;
-                    if ($num > 0) {
-                        $pageNumbers[] = $num;
-                    } else {
-                        @unlink($uploadPath);
-                        if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
-                        return ['success' => false, 'message' => "ページ番号が無効です: 「{$part}」"];
+                    // スラッシュ等がない場合: 従来の個別分割（各ページ1ファイル）
+                    $flatPages = parseSingleGroupPages($pages, $pageCount);
+                    foreach ($flatPages as $p) {
+                        $groups[] = [$p];
                     }
+                }
+            } else {
+                // 空欄 = 全ページを1ページずつ個別分割
+                for ($i = 1; $i <= $pageCount; $i++) {
+                    $groups[] = [$i];
                 }
             }
         }
-        
-        if (empty($pageNumbers)) {
-            for ($i = 1; $i <= $pageCount; $i++) {
-                $pageNumbers[] = $i;
-            }
-        }
-        
-        $pageNumbers = array_values(array_unique($pageNumbers));
         
         $splitFiles = [];
+        $actualTotalPages = 0;
         $originalFilename = pathinfo($name, PATHINFO_FILENAME);
-        $isMultiPage = count($pageNumbers) > 1;
-        $actualPageCount = 0;
         
-        if ($isMultiPage) {
-            foreach ($pageNumbers as $pageNo) {
-                if ($pageNo <= $pageCount && $pageNo > 0) {
-                    $pdf = new \setasign\Fpdi\Fpdi();
-                    $pdf->setSourceFile($sourceFile);
-                    $template = $pdf->importPage($pageNo);
-                    $size = $pdf->getTemplateSize($template);
-                    
-                    $angle = 0;
-                    if (isset($rotations[$pageNo])) {
-                        $angle = (int)$rotations[$pageNo];
-                    } elseif (isset($rotations[(string)$pageNo])) {
-                        $angle = (int)$rotations[(string)$pageNo];
-                    }
-                    $angle = (($angle % 360) + 360) % 360;
-                    $angle = (int)(round($angle / 90) * 90) % 360;
-                    
-                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
-                    $pdf->useTemplate($template);
-                    
-                    $outputFile = $outputDir . $originalFilename . '_page' . $pageNo . '.pdf';
-                    $pdf->Output('F', $outputFile);
-                    $splitFiles[] = $outputFile;
-                    $actualPageCount++;
+        foreach ($groups as $idx => $grp) {
+            $validPages = [];
+            foreach ($grp as $p) {
+                $p = (int)$p;
+                if ($p >= 1 && $p <= $pageCount && !in_array($p, $validPages, true)) {
+                    $validPages[] = $p;
                 }
             }
+            if (empty($validPages)) continue;
             
-            if ($actualPageCount === 0) {
-                @unlink($uploadPath);
-                if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
-                return ['success' => false, 'message' => "指定されたページ（" . implode(',', $pageNumbers) . "）が元のファイル（全{$pageCount}ページ）に存在しません。"];
+            $pdf = new \setasign\Fpdi\Fpdi();
+            $pdf->setSourceFile($sourceFile);
+            
+            foreach ($validPages as $pageNo) {
+                $template = $pdf->importPage($pageNo);
+                $size = $pdf->getTemplateSize($template);
+                
+                $angle = 0;
+                if (isset($rotations[$pageNo])) {
+                    $angle = (int)$rotations[$pageNo];
+                } elseif (isset($rotations[(string)$pageNo])) {
+                    $angle = (int)$rotations[(string)$pageNo];
+                }
+                $angle = (($angle % 360) + 360) % 360;
+                $angle = (int)(round($angle / 90) * 90) % 360;
+                
+                $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
+                $pdf->useTemplate($template);
+                $actualTotalPages++;
             }
             
+            $label = formatPageListToLabel($validPages);
+            $targetFileName = $originalFilename . '_' . $label . '.pdf';
+            $outputFile = $outputDir . $targetFileName;
+            
+            if (file_exists($outputFile)) {
+                $targetFileName = $originalFilename . '_' . $label . '_' . ($idx + 1) . '.pdf';
+                $outputFile = $outputDir . $targetFileName;
+            }
+            
+            $pdf->Output('F', $outputFile);
+            $splitFiles[] = $outputFile;
+        }
+        
+        if (empty($splitFiles)) {
+            @unlink($uploadPath);
+            if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
+            return ['success' => false, 'message' => "指定されたページが元のファイル（全{$pageCount}ページ）に存在しません。"];
+        }
+        
+        if (count($splitFiles) > 1) {
             $zipFile = $outputDir . $originalFilename . '_split.zip';
             $zip = new ZipArchive();
-            
-            if ($zip->open($zipFile, ZipArchive::CREATE) === TRUE) {
+            if ($zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
                 foreach ($splitFiles as $file) {
                     $zip->addFile($file, basename($file));
                 }
                 $zip->close();
-                
                 foreach ($splitFiles as $file) {
                     @unlink($file);
                 }
-                
-                $outputFile = $zipFile;
+                $finalOutput = $zipFile;
             } else {
-                $outputFile = $splitFiles[0];
+                $finalOutput = $splitFiles[0];
             }
         } else {
-            $pdf = new \setasign\Fpdi\Fpdi();
-            $pdf->setSourceFile($sourceFile);
-            
-            foreach ($pageNumbers as $pageNo) {
-                if ($pageNo <= $pageCount && $pageNo > 0) {
-                    $template = $pdf->importPage($pageNo);
-                    $size = $pdf->getTemplateSize($template);
-                    
-                    $angle = 0;
-                    if (isset($rotations[$pageNo])) {
-                        $angle = (int)$rotations[$pageNo];
-                    } elseif (isset($rotations[(string)$pageNo])) {
-                        $angle = (int)$rotations[(string)$pageNo];
-                    }
-                    $angle = (($angle % 360) + 360) % 360;
-                    $angle = (int)(round($angle / 90) * 90) % 360;
-                    
-                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']], $angle);
-                    $pdf->useTemplate($template);
-                    $actualPageCount++;
-                }
-            }
-            
-            if ($actualPageCount === 0) {
-                @unlink($uploadPath);
-                if ($tempConvertedPdf) { @unlink($tempConvertedPdf); }
-                return ['success' => false, 'message' => "指定されたページが元のファイル（全{$pageCount}ページ）に存在しません。"];
-            }
-            
-            $outputFile = $outputDir . $originalFilename . '_extracted.pdf';
-            $pdf->Output('F', $outputFile);
+            $finalOutput = $splitFiles[0];
         }
         
         @unlink($uploadPath);
         if ($tempConvertedPdf) {
             @unlink($tempConvertedPdf);
         }
-        writeLog("Split successful: {$name} -> {$actualPageCount} pages", "INFO");
+        writeLog("Split successful: {$name} -> " . count($splitFiles) . " files, {$actualTotalPages} pages", "INFO");
         
-        $isZip = (strtolower(pathinfo($outputFile, PATHINFO_EXTENSION)) === 'zip');
+        $isZip = (strtolower(pathinfo($finalOutput, PATHINFO_EXTENSION)) === 'zip');
         return [
             'success' => true,
-            'file' => $outputFile,
-            'fileCount' => $isMultiPage ? count($splitFiles) : 1,
-            'pageCount' => $actualPageCount,
+            'file' => $finalOutput,
+            'fileCount' => count($splitFiles),
+            'pageCount' => $actualTotalPages,
             'isZip' => $isZip
         ];
     } catch (Exception $e) {
@@ -1005,19 +1060,28 @@ function cleanupFiles($dir) {
                             <span id="splitSelectedCount" class="summary-value">0ページ</span>
                         </div>
                         <div class="summary-item">
+                            <span class="summary-label">出力ファイル数:</span>
+                            <span id="splitOutputFileCount" class="summary-value">0ファイル</span>
+                        </div>
+                        <div class="summary-item">
                             <span class="summary-label">ファイルサイズ:</span>
                             <span id="splitFileSize" class="summary-value">0 MB</span>
                         </div>
                     </div>
+                    <div id="splitGroupsPreview" class="groups-preview-list" style="display: none;"></div>
                 </div>
 
                 <!-- 分割プレビュー＆回転セクション -->
                 <div id="splitPreviewSection" class="split-preview-section" style="display: none;">
                     <div class="split-toolbar">
-                        <span class="split-toolbar-title" id="splitToolbarTitle">ページ選択 ＆ 回転（サムネイルをクリックして90度回転できます）</span>
+                        <span class="split-toolbar-title" id="splitToolbarTitle">ページ選択・連結 ＆ 回転（境界アイコンをクリックで連結/分割、サムネイルで90度回転）</span>
                         <div class="split-toolbar-group">
                             <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(true)">すべて選択</button>
                             <button type="button" class="tool-btn-sm" onclick="selectAllSplitPages(false)">選択解除</button>
+                        </div>
+                        <div class="split-toolbar-group">
+                            <button type="button" class="tool-btn-sm" onclick="connectAllSplitPages()">🔗 すべて連結</button>
+                            <button type="button" class="tool-btn-sm" onclick="disconnectAllSplitPages()">✂️ すべて分割</button>
                         </div>
                         <div class="split-toolbar-group" id="splitRotateToolbarGroup">
                             <button type="button" class="tool-btn-sm" onclick="rotateAllSplitPages(90)">一括 右90° ↻</button>
@@ -1028,16 +1092,16 @@ function cleanupFiles($dir) {
                     <div id="splitPagesGrid" class="split-pages-grid"></div>
                 </div>
 
-                <label for="pages">ページ指定（オプション）:</label>
-                <input type="text" name="pages" id="pages" placeholder="例: 1,3-5,7" oninput="onSplitPagesTextInput(this.value)">
-                <p class="note">※ 上のプレビュー一覧でチェックボックスをクリックして選択するか、直接ページ番号を指定できます。<br>
-                   ※ 空白の場合は全ページが対象になります。<br>
-                   ※ カンマ区切りでページ番号を指定できます（例: 1,3,5）<br>
-                   ※ ハイフンで範囲指定もできます（例: 1-5,7-9）<br>
+                <label for="pages">ページ指定・グループ分割（オプション）:</label>
+                <input type="text" name="pages" id="pages" placeholder="例: 1-3 / 4-6 / 7 / 8 / 9 / 10" oninput="onSplitPagesTextInput(this.value)">
+                <p class="note">※ プレビュー上の境界アイコン（✂ / 📎）をクリックして、ページ同士を連結したり切り離したりできます。<br>
+                   ※ スラッシュ（<code>/</code>）またはセミコロン（<code>;</code>）で区切ると、複数ファイルに分けて一括ZIP出力できます（例: <code>1-3 / 4-6 / 7-10</code>）。<br>
+                   ※ 空白の場合は全ページが1ページずつ分割されます。<br>
                    ※ 1ファイルあたり最大100MBまでアップロード可能です。</p>
                 
                 <input type="hidden" name="split" value="1">
                 <input type="hidden" name="split_rotations" id="splitRotationsInput" value="{}">
+                <input type="hidden" name="split_groups" id="splitGroupsInput" value="[]">
                 <button type="submit" name="split" id="splitSubmitBtn" class="submit-button">PDFを分割</button>
             </form>
         </div>
@@ -1939,13 +2003,14 @@ function cleanupFiles($dir) {
         }
 
         // ==========================================
-        // 分割タブ用スクリプト（プレビュー＆ページ回転対応）
+        // 分割タブ用スクリプト（プレビュー＆ページ回転＆連結分割対応）
         // ==========================================
         let splitFile = null;
         let splitPdfDoc = null;
         let splitPageCount = 0;
-        let splitRotations = {};       // { 1: 0, 2: 90, ... }
+        let splitRotations = {};           // { 1: 0, 2: 90, ... }
         let splitSelectedPages = new Set(); // 選択されたページ番号のSet
+        let splitConnections = new Set();   // 境界の連結状態（p in splitConnections なら P.p と P.p+1 は連結）
 
         async function onSplitFileChange(input) {
             const errorContainer = 'splitClientError';
@@ -1955,6 +2020,7 @@ function cleanupFiles($dir) {
             const summaryDiv = document.getElementById('splitSummary');
             const pageCountVal = document.getElementById('splitPageCount');
             const selectedCountVal = document.getElementById('splitSelectedCount');
+            const outputFileCountVal = document.getElementById('splitOutputFileCount');
             const fileSizeVal = document.getElementById('splitFileSize');
             const previewSection = document.getElementById('splitPreviewSection');
 
@@ -1985,11 +2051,13 @@ function cleanupFiles($dir) {
                 splitFile = file;
                 splitRotations = {};
                 splitSelectedPages = new Set();
+                splitConnections = new Set(); // 初期状態はすべて切り離し（1ページずつ個別分割）
                 submitBtn.disabled = false;
                 summaryDiv.style.display = 'flex';
                 fileSizeVal.textContent = formatFileSize(file.size);
                 pageCountVal.textContent = '解析中...';
                 selectedCountVal.textContent = '-';
+                if (outputFileCountVal) outputFileCountVal.textContent = '-';
 
                 try {
                     if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
@@ -2021,14 +2089,11 @@ function cleanupFiles($dir) {
                     }
 
                     pageCountVal.textContent = splitPageCount + 'ページ';
-                    selectedCountVal.textContent = splitSelectedPages.size + 'ページ';
 
-                    // ページ指定入力欄の同期
-                    updateSplitPagesInputFromSelection();
-
-                    // グリッド描画
+                    // グリッド描画＆UI初期同期
                     previewSection.style.display = 'block';
                     renderSplitPagesGrid();
+                    updateSplitUI(true);
 
                 } catch (err) {
                     console.error('Error loading file for split:', err);
@@ -2041,6 +2106,72 @@ function cleanupFiles($dir) {
             }
         }
 
+        // 選択ページと連結状態からグループ配列（各グループが1出力ファイル）を算出
+        function getSplitGroups() {
+            const sorted = Array.from(splitSelectedPages).sort((a, b) => a - b);
+            if (sorted.length === 0) return [];
+            const groups = [];
+            let currentGroup = [sorted[0]];
+
+            for (let i = 1; i < sorted.length; i++) {
+                const prev = sorted[i - 1];
+                const curr = sorted[i];
+                // 直前のページと連番で、かつその間の境界が連結されているか
+                if (curr === prev + 1 && splitConnections.has(prev)) {
+                    currentGroup.push(curr);
+                } else {
+                    groups.push(currentGroup);
+                    currentGroup = [curr];
+                }
+            }
+            if (currentGroup.length > 0) {
+                groups.push(currentGroup);
+            }
+            return groups;
+        }
+
+        // ページごとのグループ割り当て情報を取得
+        function getSplitPageGroupMap() {
+            const groups = getSplitGroups();
+            const map = {};
+            groups.forEach((grp, idx) => {
+                const label = formatPageNumbersToRange(grp);
+                grp.forEach(p => {
+                    map[p] = {
+                        groupIndex: idx,
+                        groupSize: grp.length,
+                        groupLabel: `ファイル${idx + 1}`
+                    };
+                });
+            });
+            return map;
+        }
+
+        // 境界（P.pageNo と P.pageNo+1 の間）の連結/分割を切り替え
+        function toggleBoundary(pageNo) {
+            if (splitConnections.has(pageNo)) {
+                splitConnections.delete(pageNo);
+            } else {
+                splitConnections.add(pageNo);
+            }
+            updateSplitUI(true);
+        }
+
+        // すべて連結
+        function connectAllSplitPages() {
+            for (let p = 1; p < splitPageCount; p++) {
+                splitConnections.add(p);
+            }
+            updateSplitUI(true);
+        }
+
+        // すべて分割（リセット）
+        function disconnectAllSplitPages() {
+            splitConnections.clear();
+            updateSplitUI(true);
+        }
+
+        // サムネイルグリッドの描画
         function renderSplitPagesGrid() {
             const grid = document.getElementById('splitPagesGrid');
             if (!grid) return;
@@ -2059,8 +2190,8 @@ function cleanupFiles($dir) {
             }
             if (toolbarTitle) {
                 toolbarTitle.textContent = isText 
-                    ? 'ページ選択' 
-                    : 'ページ選択 ＆ 回転（サムネイルをクリックして90度回転できます）';
+                    ? 'ページ選択・連結（境界アイコンをクリックで連結/分割）' 
+                    : 'ページ選択・連結 ＆ 回転（境界アイコンをクリックで連結/分割、サムネイルで90度回転）';
             }
 
             for (let pageNo = 1; pageNo <= splitPageCount; pageNo++) {
@@ -2068,10 +2199,11 @@ function cleanupFiles($dir) {
                 const angle = isText ? 0 : (splitRotations[pageNo] || 0);
 
                 const card = document.createElement('div');
-                card.className = `split-page-card ${isSelected ? 'is-selected' : ''} ${angle !== 0 ? 'is-rotated' : ''} ${isText ? 'is-text-card' : ''}`;
+                card.className = `split-page-card ${isSelected ? 'is-selected' : 'is-excluded'} ${angle !== 0 ? 'is-rotated' : ''} ${isText ? 'is-text-card' : ''}`;
                 card.id = `splitCard_${pageNo}`;
 
                 card.innerHTML = `
+                    <div class="group-badge" id="splitGroupBadge_${pageNo}">ファイル1</div>
                     <div class="card-header-row">
                         <label class="page-check-label" onclick="event.stopPropagation();">
                             <input type="checkbox" id="splitCheck_${pageNo}" ${isSelected ? 'checked' : ''} onchange="toggleSplitPageSelection(${pageNo}, this.checked)">
@@ -2100,6 +2232,23 @@ function cleanupFiles($dir) {
 
                 grid.appendChild(card);
 
+                // 最終ページ以外には境界ボタンを配置
+                if (pageNo < splitPageCount) {
+                    const boundaryBtn = document.createElement('button');
+                    boundaryBtn.type = 'button';
+                    boundaryBtn.className = 'split-boundary-btn is-split';
+                    boundaryBtn.id = `splitBoundaryBtn_${pageNo}`;
+                    boundaryBtn.title = `クリックで P.${pageNo} と P.${pageNo + 1} を連結 📎`;
+                    boundaryBtn.onclick = (function(p) {
+                        return function() { toggleBoundary(p); };
+                    })(pageNo);
+                    boundaryBtn.innerHTML = `
+                        <div class="boundary-line"></div>
+                        <div class="boundary-badge">✂</div>
+                    `;
+                    grid.appendChild(boundaryBtn);
+                }
+
                 if (!isImage && !isText && splitPdfDoc) {
                     const canvas = document.getElementById(`splitCanvas_${pageNo}`);
                     if (canvas) {
@@ -2109,6 +2258,7 @@ function cleanupFiles($dir) {
             }
         }
 
+        // カード選択トグル
         function toggleSplitPageSelection(pageNo, isChecked) {
             if (isChecked === undefined) {
                 if (splitSelectedPages.has(pageNo)) {
@@ -2123,23 +2273,10 @@ function cleanupFiles($dir) {
                     splitSelectedPages.delete(pageNo);
                 }
             }
-
-            const card = document.getElementById(`splitCard_${pageNo}`);
-            const check = document.getElementById(`splitCheck_${pageNo}`);
-            const nowSelected = splitSelectedPages.has(pageNo);
-
-            if (card) {
-                if (nowSelected) card.classList.add('is-selected');
-                else card.classList.remove('is-selected');
-            }
-            if (check) {
-                check.checked = nowSelected;
-            }
-
-            updateSplitPagesInputFromSelection();
-            updateSplitSelectedCountUI();
+            updateSplitUI(true);
         }
 
+        // ページ回転
         function rotateSplitPage(pageNo, delta) {
             const current = splitRotations[pageNo] || 0;
             const next = ((current + delta) % 360 + 360) % 360;
@@ -2181,72 +2318,182 @@ function cleanupFiles($dir) {
                     splitSelectedPages.add(p);
                 }
             }
+            updateSplitUI(true);
+        }
 
-            for (let p = 1; p <= splitPageCount; p++) {
-                const card = document.getElementById(`splitCard_${p}`);
-                const check = document.getElementById(`splitCheck_${p}`);
+        // UI全体の同期・更新処理
+        function updateSplitUI(syncTextInput = true) {
+            const groups = getSplitGroups();
+            const pageGroupMap = getSplitPageGroupMap();
+
+            // 各カードと境界ボタンのスタイル同期
+            for (let pageNo = 1; pageNo <= splitPageCount; pageNo++) {
+                const card = document.getElementById(`splitCard_${pageNo}`);
+                const check = document.getElementById(`splitCheck_${pageNo}`);
+                const groupBadge = document.getElementById(`splitGroupBadge_${pageNo}`);
+                const isSelected = splitSelectedPages.has(pageNo);
+
+                if (check) check.checked = isSelected;
+
                 if (card) {
-                    if (selectAll) card.classList.add('is-selected');
-                    else card.classList.remove('is-selected');
+                    for (let i = 0; i < 6; i++) {
+                        card.classList.remove(`group-color-${i}`);
+                    }
+                    if (isSelected) {
+                        card.classList.add('is-selected');
+                        card.classList.remove('is-excluded');
+                        const info = pageGroupMap[pageNo];
+                        if (info) {
+                            const colorIdx = info.groupIndex % 6;
+                            card.classList.add(`group-color-${colorIdx}`);
+                            if (groupBadge) {
+                                groupBadge.textContent = info.groupSize > 1 
+                                    ? `📄 ファイル${info.groupIndex + 1} (${info.groupSize}p)`
+                                    : `📄 ファイル${info.groupIndex + 1}`;
+                                groupBadge.style.display = 'block';
+                            }
+                        }
+                    } else {
+                        card.classList.remove('is-selected');
+                        card.classList.add('is-excluded');
+                        if (groupBadge) {
+                            groupBadge.textContent = '❌ 除外';
+                            groupBadge.style.display = 'block';
+                        }
+                    }
                 }
-                if (check) check.checked = selectAll;
+
+                // 境界ボタンの更新
+                if (pageNo < splitPageCount) {
+                    const btn = document.getElementById(`splitBoundaryBtn_${pageNo}`);
+                    const isConnected = splitConnections.has(pageNo);
+                    const bothSelected = splitSelectedPages.has(pageNo) && splitSelectedPages.has(pageNo + 1);
+
+                    if (btn) {
+                        if (isConnected && bothSelected) {
+                            btn.className = 'split-boundary-btn is-connected';
+                            btn.title = `P.${pageNo} と P.${pageNo + 1} は連結中（クリックで切り離し ✂）`;
+                            btn.innerHTML = `
+                                <div class="boundary-line"></div>
+                                <div class="boundary-badge">📎</div>
+                            `;
+                        } else {
+                            btn.className = 'split-boundary-btn is-split';
+                            btn.title = `クリックで P.${pageNo} と P.${pageNo + 1} を連結 📎`;
+                            btn.innerHTML = `
+                                <div class="boundary-line"></div>
+                                <div class="boundary-badge">✂</div>
+                            `;
+                        }
+                    }
+                }
             }
 
-            updateSplitPagesInputFromSelection();
-            updateSplitSelectedCountUI();
-        }
+            // サマリー表示の更新
+            const selectedCountVal = document.getElementById('splitSelectedCount');
+            const outputFileCountVal = document.getElementById('splitOutputFileCount');
+            const previewList = document.getElementById('splitGroupsPreview');
 
-        function updateSplitPagesInputFromSelection() {
-            const pagesInput = document.getElementById('pages');
-            if (!pagesInput) return;
-            if (splitSelectedPages.size === splitPageCount) {
-                pagesInput.value = ''; // 全ページの場合は空欄でOK
-            } else {
-                pagesInput.value = formatPageNumbersToRange(Array.from(splitSelectedPages));
+            if (selectedCountVal) {
+                selectedCountVal.textContent = splitSelectedPages.size + 'ページ';
+            }
+            if (outputFileCountVal) {
+                outputFileCountVal.textContent = groups.length + 'ファイル' + (groups.length > 1 ? ' (ZIP)' : '');
+            }
+
+            if (previewList) {
+                if (groups.length === 0) {
+                    previewList.style.display = 'none';
+                    previewList.innerHTML = '';
+                } else {
+                    previewList.style.display = 'flex';
+                    let html = '<span class="groups-preview-title">出力予定:</span>';
+                    groups.forEach((g, idx) => {
+                        const label = formatPageNumbersToRange(g);
+                        html += `<span class="group-pill">ファイル${idx + 1}: P.${label} (${g.length}p)</span>`;
+                    });
+                    previewList.innerHTML = html;
+                }
+            }
+
+            // テキスト入力欄の同期
+            if (syncTextInput) {
+                const pagesInput = document.getElementById('pages');
+                if (pagesInput) {
+                    if (groups.length === 0) {
+                        pagesInput.value = '';
+                    } else if (groups.length === splitPageCount && splitSelectedPages.size === splitPageCount) {
+                        // 全ページ1pずつの場合は空欄でOK（手入力しやすいように空欄またはスラッシュ）
+                        pagesInput.value = '';
+                    } else {
+                        pagesInput.value = groups.map(g => formatPageNumbersToRange(g)).join(' / ');
+                    }
+                }
+            }
+
+            // 隠しフィールドにJSONセット
+            const groupsInput = document.getElementById('splitGroupsInput');
+            if (groupsInput) {
+                groupsInput.value = JSON.stringify(groups);
             }
         }
 
+        // テキスト手入力時の同期
         function onSplitPagesTextInput(val) {
             if (!val || val.trim() === '') {
-                // 空欄 = 全ページ選択
+                // 空欄 = 全ページ個別分割
+                splitSelectedPages = new Set();
                 for (let p = 1; p <= splitPageCount; p++) {
                     splitSelectedPages.add(p);
                 }
-            } else {
-                const parsed = parsePageRange(val, splitPageCount);
-                splitSelectedPages = new Set(parsed);
+                splitConnections.clear();
+                updateSplitUI(false);
+                return;
             }
 
-            for (let p = 1; p <= splitPageCount; p++) {
-                const isSel = splitSelectedPages.has(p);
-                const card = document.getElementById(`splitCard_${p}`);
-                const check = document.getElementById(`splitCheck_${p}`);
-                if (card) {
-                    if (isSel) card.classList.add('is-selected');
-                    else card.classList.remove('is-selected');
+            // スラッシュまたはセミコロンで区切られているかチェック
+            const segments = val.split(/[\/;]/).map(s => s.trim()).filter(s => s.length > 0);
+            const newSelected = new Set();
+            const newConnections = new Set();
+
+            if (segments.length > 1 || val.includes('/') || val.includes(';')) {
+                // グループ指定モード
+                for (let seg of segments) {
+                    const pagesInGroup = parsePageRange(seg, splitPageCount);
+                    for (let i = 0; i < pagesInGroup.length; i++) {
+                        const p = pagesInGroup[i];
+                        newSelected.add(p);
+                        if (i > 0 && pagesInGroup[i] === pagesInGroup[i - 1] + 1) {
+                            newConnections.add(pagesInGroup[i - 1]);
+                        }
+                    }
                 }
-                if (check) check.checked = isSel;
+            } else {
+                // 従来のカンマ区切り（1ページずつの個別分割）
+                const flatPages = parsePageRange(val, splitPageCount);
+                for (let p of flatPages) {
+                    newSelected.add(p);
+                }
             }
 
-            updateSplitSelectedCountUI();
-        }
-
-        function updateSplitSelectedCountUI() {
-            const countVal = document.getElementById('splitSelectedCount');
-            if (countVal) {
-                countVal.textContent = splitSelectedPages.size + 'ページ';
-            }
+            splitSelectedPages = newSelected;
+            splitConnections = newConnections;
+            updateSplitUI(false);
         }
 
         // 分割フォーム送信前フック
         document.getElementById('splitForm')?.addEventListener('submit', function(e) {
-            if (splitPageCount > 0 && splitSelectedPages.size === 0) {
+            const groups = getSplitGroups();
+            if (splitPageCount > 0 && groups.length === 0) {
                 e.preventDefault();
                 showClientError('splitClientError', ['抽出するページを少なくとも1つ選択してください。']);
                 return;
             }
             // 回転情報をJSONセット
             document.getElementById('splitRotationsInput').value = JSON.stringify(splitRotations);
+            // グループ情報をJSONセット
+            document.getElementById('splitGroupsInput').value = JSON.stringify(groups);
+
             const submitBtn = document.getElementById('splitSubmitBtn');
             if (submitBtn) {
                 setTimeout(function() {

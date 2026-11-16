@@ -1,0 +1,636 @@
+// ==========================================================================
+// PDF Invoice Sorter - Modern Interface Styling
+// Designed according to interface-design & frontend-design guidelines
+// ==========================================================================
+
+$primary-color: #2563eb;
+$primary-hover: #1d4ed8;
+$primary-light: #eff6ff;
+
+$success-color: #16a34a;
+$success-light: #f0fdf4;
+$success-border: #bbf7d0;
+
+$warning-color: #d97706;
+$warning-light: #fffbeb;
+$warning-border: #fde68a;
+
+$error-color: #dc2626;
+$error-light: #fef2f2;
+$error-border: #fecaca;
+
+$info-color: #0284c7;
+$info-light: #f0f9ff;
+
+$text-dark: #1e293b;
+$text-muted: #64748b;
+$border-color: #e2e8f0;
+$bg-body: #f8fafc;
+$bg-card: #ffffff;
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "BIZ UDPGothic", sans-serif;
+    background-color: $bg-body;
+    color: $text-dark;
+    line-height: 1.6;
+    padding: 24px 16px;
+    -webkit-font-smoothing: antialiased;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+// ==========================================
+// ヘッダーエリア
+// ==========================================
+.header-area {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid $border-color;
+
+    .header-title-box {
+        h1 {
+            font-size: 24px;
+            font-weight: 800;
+            color: $text-dark;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-sub {
+            font-size: 13px;
+            color: $text-muted;
+            margin-top: 4px;
+        }
+    }
+
+    .header-badges {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+
+        .badge-secure {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background-color: $success-light;
+            color: $success-color;
+            border: 1px solid $success-border;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background-color: $info-light;
+            color: $info-color;
+            border: 1px solid #bae6fd;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+
+            .pulse-dot {
+                width: 8px;
+                height: 8px;
+                background-color: $info-color;
+                border-radius: 50%;
+                display: inline-block;
+                animation: pulseAnimation 1.5s infinite;
+            }
+        }
+    }
+}
+
+@keyframes pulseAnimation {
+    0% { transform: scale(0.9); opacity: 0.7; }
+    50% { transform: scale(1.3); opacity: 1; }
+    100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+// ==========================================
+// リアルタイム・アナウンスバー (AI作業中のリアルタイムバナー)
+// ==========================================
+.announcement-banner {
+    display: none; // 動的制御
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    color: #ffffff;
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 12px rgba(30, 58, 138, 0.2);
+
+    .banner-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .banner-content {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+
+        .banner-icon {
+            font-size: 26px;
+            animation: spinAnimation 3s linear infinite;
+        }
+
+        .banner-text-box {
+            .banner-title {
+                font-size: 15px;
+                font-weight: 700;
+                letter-spacing: 0.02em;
+            }
+            .banner-desc {
+                font-size: 12px;
+                opacity: 0.9;
+                margin-top: 2px;
+            }
+        }
+    }
+
+    .banner-badge {
+        background-color: rgba(255, 255, 255, 0.2);
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+}
+
+@keyframes spinAnimation {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+// ==========================================
+// 設定カード & アップロードカード
+// ==========================================
+.card {
+    background-color: $bg-card;
+    border: 1px solid $border-color;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid $border-color;
+
+        h2 {
+            font-size: 16px;
+            font-weight: 700;
+            color: $text-dark;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toggle-btn {
+            background: none;
+            border: none;
+            color: $primary-color;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+
+            &:hover {
+                background-color: $primary-light;
+            }
+        }
+    }
+}
+
+// 設定フォーム
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+
+        label {
+            font-size: 13px;
+            font-weight: 600;
+            color: $text-dark;
+        }
+
+        .form-select, .form-input {
+            padding: 8px 12px;
+            border: 1.5px solid $border-color;
+            border-radius: 6px;
+            font-size: 14px;
+            color: $text-dark;
+            background-color: #ffffff;
+            transition: border-color 0.2s;
+
+            &:focus {
+                outline: none;
+                border-color: $primary-color;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+            }
+        }
+
+        .form-help {
+            font-size: 11px;
+            color: $text-muted;
+        }
+    }
+}
+
+// アップロード・ドロップゾーン
+.drop-zone {
+    border: 2px dashed $primary-color;
+    border-radius: 8px;
+    background-color: #fafcff;
+    padding: 36px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 16px;
+
+    &:hover, &.dragover {
+        background-color: $primary-light;
+        border-color: $primary-hover;
+        transform: translateY(-1px);
+    }
+
+    .drop-icon {
+        font-size: 38px;
+        color: $primary-color;
+        margin-bottom: 8px;
+    }
+
+    .drop-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: $text-dark;
+        margin-bottom: 6px;
+    }
+
+    .drop-sub {
+        font-size: 13px;
+        color: $text-muted;
+    }
+}
+
+.upload-stats-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: $text-muted;
+    margin-top: 8px;
+
+    .stat-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 12px;
+        background-color: #f1f5f9;
+        font-weight: 600;
+        color: $text-dark;
+    }
+}
+
+// ==========================================
+// 仕分け一覧テーブル
+// ==========================================
+.table-container {
+    overflow-x: auto;
+    background-color: $bg-card;
+    border: 1px solid $border-color;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+        font-size: 13px;
+
+        thead {
+            background-color: #f8fafc;
+            border-bottom: 1.5px solid $border-color;
+
+            th {
+                padding: 12px 14px;
+                font-weight: 700;
+                color: $text-muted;
+                white-space: nowrap;
+            }
+        }
+
+        tbody {
+            tr {
+                border-bottom: 1px solid $border-color;
+                transition: background-color 0.15s;
+
+                &:hover {
+                    background-color: #f8fafc;
+                }
+
+                // AI処理中の行ハイライト & ロック表示
+                &.is-processing {
+                    background-color: #f0f9ff;
+                    position: relative;
+
+                    td {
+                        opacity: 0.75;
+                    }
+
+                    .locked-badge {
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 4px;
+                        color: $info-color;
+                        font-weight: 700;
+                        font-size: 11px;
+                    }
+                }
+
+                td {
+                    padding: 12px 14px;
+                    vertical-align: middle;
+                }
+            }
+        }
+    }
+}
+
+// ステータスバッジ
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 14px;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+
+    &.status-queued {
+        background-color: #f1f5f9;
+        color: #475569;
+        border: 1px solid #cbd5e1;
+    }
+
+    &.status-processing {
+        background-color: $info-light;
+        color: $info-color;
+        border: 1px solid #bae6fd;
+    }
+
+    &.status-completed {
+        background-color: $success-light;
+        color: $success-color;
+        border: 1px solid $success-border;
+    }
+
+    &.status-needs_review {
+        background-color: $warning-light;
+        color: $warning-color;
+        border: 1px solid $warning-border;
+    }
+
+    &.status-error {
+        background-color: $error-light;
+        color: $error-color;
+        border: 1px solid $error-border;
+    }
+}
+
+// インライン編集フォーム
+.inline-input {
+    width: 100%;
+    min-width: 110px;
+    padding: 6px 8px;
+    border: 1px solid $border-color;
+    border-radius: 4px;
+    font-size: 13px;
+    background-color: #ffffff;
+    transition: all 0.2s;
+
+    &:focus {
+        outline: none;
+        border-color: $primary-color;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+    }
+
+    &:disabled {
+        background-color: #f1f5f9;
+        color: #94a3b8;
+        cursor: not-allowed;
+    }
+}
+
+// アクションボタン群
+.action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.15s ease;
+        text-decoration: none;
+
+        &:disabled {
+            opacity: 0.45;
+            cursor: not-allowed !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        &.btn-primary {
+            background-color: $primary-color;
+            color: #ffffff;
+            &:hover:not(:disabled) {
+                background-color: $primary-hover;
+            }
+        }
+
+        &.btn-success {
+            background-color: $success-color;
+            color: #ffffff;
+            &:hover:not(:disabled) {
+                background-color: #15803d;
+            }
+        }
+
+        &.btn-secondary {
+            background-color: #f1f5f9;
+            color: $text-dark;
+            border-color: #cbd5e1;
+            &:hover:not(:disabled) {
+                background-color: #e2e8f0;
+            }
+        }
+
+        &.btn-danger {
+            background-color: $error-light;
+            color: $error-color;
+            border-color: $error-border;
+            &:hover:not(:disabled) {
+                background-color: #fee2e2;
+            }
+        }
+    }
+}
+
+// ==========================================
+// プレビューモーダル
+// ==========================================
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+
+    &.is-active {
+        display: flex;
+    }
+
+    .modal-dialog {
+        background-color: #ffffff;
+        border-radius: 10px;
+        width: 100%;
+        max-width: 900px;
+        height: 90vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background-color: #f8fafc;
+            border-bottom: 1px solid $border-color;
+
+            h3 {
+                font-size: 16px;
+                font-weight: 700;
+                color: $text-dark;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .modal-close-btn {
+                background: none;
+                border: none;
+                font-size: 24px;
+                color: $text-muted;
+                cursor: pointer;
+                padding: 4px;
+                line-height: 1;
+
+                &:hover {
+                    color: $text-dark;
+                }
+            }
+        }
+
+        .modal-body {
+            flex: 1;
+            background-color: #525659;
+            overflow: hidden;
+
+            iframe {
+                width: 100%;
+                height: 100%;
+                border: none;
+            }
+        }
+    }
+}
+
+// トースト通知
+.toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    .toast {
+        background-color: #1e293b;
+        color: #ffffff;
+        padding: 12px 20px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+        animation: toastIn 0.25s ease-out;
+
+        &.toast-success {
+            background-color: $success-color;
+        }
+
+        &.toast-error {
+            background-color: $error-color;
+        }
+    }
+}
+
+@keyframes toastIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}

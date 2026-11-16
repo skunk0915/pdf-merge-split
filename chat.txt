@@ -240,3 +240,25 @@ AI: 処理完了時にタブ直下に表示されるダウンロードボタン�
 - css/style.css
 - index.php
 - scss/style.scss
+
+2026-11-16 12:55:23
+USER: 今からの依頼はいまのカゴヤのサービスに直接影響しない環境にデプロイして。- スキャンｐｄｆをクライアント別、年月別で仕わけ。aiの処理はagy使用。gemini apiは使用禁止でgemini apiでないとできないことがあるなら要相談。必要なら検討する。
+AI: 既存のPDF結合分割サービス（pdf-merge-split）に一切影響を与えない完全分離環境として、同一VPS（xserver-vps-ow: 162.43.39.238）上に別サブドメイン（https://invoice-sort.162.43.39.238.sslip.io/）を新設し、専用Let's Encrypt SSL、IP制限（122.213.201.14）、Basic認証、機密ストレージ保護（DocumentRoot外保管＆PHP配信）を適用した「スキャンPDF自動仕分け・請求書管理システム」を構築しました。ローカルMac上で動作する常駐ワーカーがVPSのキューを監視し、Antigravity CLI（~/.local/bin/agy、--model flash-high）による非対話解析で取引先名・請求日・支払日を高精度に抽出。命名規則（順序選択可能）およびクライアント別・年月別フォルダへ自動格納します。非同期バックグラウンド処理、AI処理中の操作ロック、リアルタイムステータスバナー、手動修正によるフォルダ再配置、AI再仕分け機能、Google Drive / GCP 同期連携を実装し、実機動作テストを完了しました。
+編集したファイルパス:
+- .gitignore
+- README.md
+- chat.txt
+- invoice_sorter/.env.example
+- invoice_sorter/README.md
+- invoice_sorter/config/settings.php
+- invoice_sorter/deploy.sh
+- invoice_sorter/public/api.php
+- invoice_sorter/public/css/style.css
+- invoice_sorter/public/css/style.css.map
+- invoice_sorter/public/download.php
+- invoice_sorter/public/index.php
+- invoice_sorter/public/js/app.js
+- invoice_sorter/scss/style.scss
+- invoice_sorter/start_worker.sh
+- invoice_sorter/worker/cloud_sync.py
+- invoice_sorter/worker/worker.py

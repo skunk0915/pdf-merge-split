@@ -20,3 +20,20 @@ vendor/setasign/tfpdf/font/unifont/ipag*
 
 # Tsunagi のチャット記録（会話中に貼った内容が入るため公開リポジトリには含めない）
 docs/chat_history/
+
+# Environment files & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python Cache
+__pycache__/
+*.py[cod]
+
+# Invoice Sorter storage & databases
+invoice_sorter/storage/
+invoice_sorter/worker/venv/
+*.sqlite
+*.sqlite-journal

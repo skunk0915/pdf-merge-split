@@ -1030,7 +1030,7 @@ function cleanupFiles($dir) {
                     <div id="fileList" class="file-list sortable"></div>
                 </div>
                 <p class="note">※ ファイルは「↑」「↓」ボタンまたはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。<br>
-                   ※ 各ファイル右側の「🔄 回転・プレビュー」でページを展開し、ページ単位で90度回転を設定できます。<br>
+                   ※ 各ファイル右側の「詳細」でページを展開し、ページのプレビュー確認や90度回転を設定できます。<br>
                    ※ 画像（JPG, PNG, GIF, WebP）やテキスト（TXT）も自動でPDFページに変換され、PDFとの混在結合や単体変換・回転が可能です。<br>
                    ※ 一度に処理できるファイル数は最大100個、合計サイズは最大200MBまでです。</p>
                 
@@ -1506,7 +1506,7 @@ function cleanupFiles($dir) {
                 // カスタムプロパティの初期化
                 file.uid = 'mf_' + Math.random().toString(36).substr(2, 9);
                 file.rotations = {};
-                file.isExpanded = (mergeFiles.length < 3); // 最初の数個は自動で展開表示
+                file.isExpanded = false; // デフォルトは閉じる
                 file.pdfDoc = null;
                 file.previewUrl = null;
                 file.textContent = null;
@@ -1704,18 +1704,12 @@ function cleanupFiles($dir) {
                     fileSize.textContent = formatFileSize(file.size);
                     header.appendChild(fileSize);
 
-                    // プレビュー・回転トグルボタン
+                    // 詳細展開トグルボタン（旧: プレビュー・回転）
                     const rotateBtn = document.createElement('button');
                     rotateBtn.type = 'button';
-                    if (ext === 'txt') {
-                        rotateBtn.className = `rotate-toggle-btn text-toggle-btn ${file.isExpanded ? 'active' : ''}`;
-                        rotateBtn.innerHTML = `📄 テキスト表示 ${file.isExpanded ? '▲' : '▼'}`;
-                        rotateBtn.title = 'テキスト内容のプレビューを表示/非表示';
-                    } else {
-                        rotateBtn.className = `rotate-toggle-btn ${file.isExpanded ? 'active' : ''}`;
-                        rotateBtn.innerHTML = `🔄 ページ回転・プレビュー ${file.isExpanded ? '▲' : '▼'}`;
-                        rotateBtn.title = '各ページの回転とプレビューを表示/非表示';
-                    }
+                    rotateBtn.className = `rotate-toggle-btn file-detail-btn ${file.isExpanded ? 'active' : ''}`;
+                    rotateBtn.innerHTML = `詳細 ${file.isExpanded ? '▲' : '▼'}`;
+                    rotateBtn.title = 'ページのプレビューや詳細設定を表示/非表示';
                     rotateBtn.onclick = (e) => {
                         e.stopPropagation();
                         toggleFilePages(i);
@@ -1797,7 +1791,7 @@ function cleanupFiles($dir) {
 
                             const tbTitle = document.createElement('span');
                             tbTitle.className = 'toolbar-title';
-                            tbTitle.textContent = file.pageCount !== null ? `このファイルのページ回転（${file.pageCount}ページ）` : 'ページ解析中...';
+                            tbTitle.textContent = file.pageCount !== null ? `ページ詳細（${file.pageCount}ページ・サムネイルクリックで拡大）` : 'ページ解析中...';
                             toolbar.appendChild(tbTitle);
 
                             const tbActions = document.createElement('div');

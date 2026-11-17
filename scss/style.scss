@@ -249,6 +249,13 @@ button[type="submit"]:hover {
     transition: all 0.2s ease;
     box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 
+    &.item-moved-highlight {
+        background-color: #eff6ff;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+        transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
     .file-item-header {
         display: flex;
         align-items: center;
@@ -262,6 +269,64 @@ button[type="submit"]:hover {
             font-size: 16px;
             user-select: none;
             padding: 0 4px;
+        }
+
+        .file-order-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            background: #f1f5f9;
+            border-radius: 4px;
+            padding: 2px;
+            border: 1px solid #e2e8f0;
+
+            .file-order-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 22px;
+                height: 22px;
+                padding: 0;
+                border: 1px solid transparent;
+                background-color: #ffffff;
+                color: #475569;
+                border-radius: 3px;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                line-height: 1;
+
+                svg {
+                    display: block;
+                    width: 12px;
+                    height: 12px;
+                    stroke: currentColor;
+                }
+
+                &:hover:not(:disabled) {
+                    background-color: #3b82f6;
+                    color: #ffffff;
+                    border-color: #2563eb;
+                }
+
+                &:active:not(:disabled) {
+                    background-color: #1d4ed8;
+                    color: #ffffff;
+                    transform: translateY(1px);
+                }
+
+                &:focus-visible {
+                    outline: 2px solid #3b82f6;
+                    outline-offset: 1px;
+                }
+
+                &:disabled {
+                    background-color: transparent;
+                    color: #cbd5e1;
+                    cursor: not-allowed;
+                    opacity: 0.5;
+                    border-color: transparent;
+                }
+            }
         }
 
         .file-name {

@@ -1029,7 +1029,7 @@ function cleanupFiles($dir) {
                     </div>
                     <div id="fileList" class="file-list sortable"></div>
                 </div>
-                <p class="note">※ ファイルはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。<br>
+                <p class="note">※ ファイルは「↑」「↓」ボタンまたはドラッグ＆ドロップで順序を変更できます。「×」をクリックするとファイルを削除できます。<br>
                    ※ 各ファイル右側の「🔄 回転・プレビュー」でページを展開し、ページ単位で90度回転を設定できます。<br>
                    ※ 画像（JPG, PNG, GIF, WebP）やテキスト（TXT）も自動でPDFページに変換され、PDFとの混在結合や単体変換・回転が可能です。<br>
                    ※ 一度に処理できるファイル数は最大100個、合計サイズは最大200MBまでです。</p>
@@ -1641,7 +1641,48 @@ function cleanupFiles($dir) {
                     const handle = document.createElement('span');
                     handle.className = 'handle';
                     handle.innerHTML = '&#8597;';
+                    handle.title = 'ドラッグして順序を変更';
                     header.appendChild(handle);
+
+                    // 前後入れ替えボタン（↑ / ↓）
+                    const orderGroup = document.createElement('div');
+                    orderGroup.className = 'file-order-group';
+
+                    const upBtn = document.createElement('button');
+                    upBtn.type = 'button';
+                    upBtn.className = 'file-order-btn file-order-up';
+                    upBtn.title = '1つ前（上）へ移動';
+                    upBtn.setAttribute('aria-label', `${file.name} を1つ前へ移動`);
+                    upBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+                    if (i === 0) {
+                        upBtn.disabled = true;
+                    } else {
+                        upBtn.onclick = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            moveFileOrder(i, -1);
+                        };
+                    }
+                    orderGroup.appendChild(upBtn);
+
+                    const downBtn = document.createElement('button');
+                    downBtn.type = 'button';
+                    downBtn.className = 'file-order-btn file-order-down';
+                    downBtn.title = '1つ後（下）へ移動';
+                    downBtn.setAttribute('aria-label', `${file.name} を1つ後へ移動`);
+                    downBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+                    if (i === mergeFiles.length - 1) {
+                        downBtn.disabled = true;
+                    } else {
+                        downBtn.onclick = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            moveFileOrder(i, 1);
+                        };
+                    }
+                    orderGroup.appendChild(downBtn);
+
+                    header.appendChild(orderGroup);
 
                     const typeBadge = document.createElement('span');
                     typeBadge.className = `file-type-badge type-${typeInfo.type}`;
@@ -1942,6 +1983,39 @@ function cleanupFiles($dir) {
             updateMergeSummary();
         }
 
+        function moveFileOrder(fromIndex, direction) {
+            clearServerResult();
+            const toIndex = fromIndex + direction;
+            if (toIndex < 0 || toIndex >= mergeFiles.length) return;
+
+            const temp = mergeFiles[fromIndex];
+            mergeFiles[fromIndex] = mergeFiles[toIndex];
+            mergeFiles[toIndex] = temp;
+
+            updateFileList();
+            updateMergeSummary();
+
+            // 移動した要素を視覚的にハイライトし、フォーカスを保持
+            const targetItem = document.querySelector(`.file-item[data-index="${toIndex}"]`);
+            if (targetItem) {
+                targetItem.classList.add('item-moved-highlight');
+                setTimeout(() => {
+                    targetItem.classList.remove('item-moved-highlight');
+                }, 600);
+
+                // 移動先での適切なボタンにフォーカスを復元（キーボード操作対応）
+                const btnSelector = direction < 0 ? '.file-order-up' : '.file-order-down';
+                let nextBtn = targetItem.querySelector(btnSelector);
+                if (nextBtn && nextBtn.disabled) {
+                    // 端に到達した場合は反対側のボタンへ
+                    nextBtn = targetItem.querySelector(direction < 0 ? '.file-order-down' : '.file-order-up');
+                }
+                if (nextBtn && typeof nextBtn.focus === 'function') {
+                    nextBtn.focus();
+                }
+            }
+        }
+
         function initSortable() {
             const fileList = document.getElementById('fileList');
             let draggedItem = null;
@@ -1952,7 +2026,7 @@ function cleanupFiles($dir) {
 
                 item.addEventListener('dragstart', function(e) {
                     // 入力欄やボタンのドラッグは防止
-                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') {
+                    if (e.target.closest('input') || e.target.closest('button') || e.target.closest('.file-order-group')) {
                         e.preventDefault();
                         return;
                     }

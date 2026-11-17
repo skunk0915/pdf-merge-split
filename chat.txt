@@ -262,3 +262,15 @@ AI: 既存のPDF結合分割サービス（pdf-merge-split）に一切影響を�
 - invoice_sorter/start_worker.sh
 - invoice_sorter/worker/cloud_sync.py
 - invoice_sorter/worker/worker.py
+
+2026-11-17 16:40:00
+USER: 結合・変換するファイル（複数可）:
+の順番入れ替えがドラッグでやるUIだが、↓↑ボタンつけて前後入れ替えUIも欲しい
+AI: 「PDF結合・変換」画面のファイル一覧において、従来のドラッグ＆ドロップ操作に加えて、各ファイル項目のヘッダーに前後の順序を1つずつ入れ替える「↑」「↓」ボタンを追加しました。リスト先頭では「↑」、末尾では「↓」ボタンを自動無効化（disabled）し、無効時の不要なhoverエフェクトを抑止。ボタン押下時には移動先が視覚的にハイライトされ、連続操作しやすいようフォーカス追従処理も実装しました。SCSSのビルドを行い、本番環境（Xserver VPS: https://pdf-merge-split.162.43.39.238.sslip.io/）へデプロイして正常動作を確認しました。
+編集したファイルパス:
+- README.md
+- chat.txt
+- css/style.css
+- css/style.css.map
+- index.php
+- scss/style.scss

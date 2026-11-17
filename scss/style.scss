@@ -1015,10 +1015,35 @@ button:disabled, .submit-button:disabled {
         cursor: pointer;
         margin: 6px 0;
         position: relative;
-        transition: background-color 0.2s;
+        transition: all 0.2s ease;
 
         &:hover {
-            background-color: #f1f5f9;
+            background-color: #eff6ff;
+            border-color: #93c5fd;
+            box-shadow: 0 2px 6px rgba(37, 99, 235, 0.15);
+
+            .thumb-zoom-badge {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .thumb-zoom-badge {
+            position: absolute;
+            bottom: 6px;
+            right: 6px;
+            background: rgba(15, 23, 42, 0.82);
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 4px;
+            opacity: 0;
+            transform: translateY(4px);
+            transition: all 0.2s ease;
+            pointer-events: none;
+            backdrop-filter: blur(2px);
+            z-index: 2;
         }
 
         .canvas-wrap {
@@ -1143,10 +1168,35 @@ button:disabled, .submit-button:disabled {
         cursor: pointer;
         margin-bottom: 6px;
         position: relative;
-        transition: background-color 0.15s;
+        transition: all 0.2s ease;
 
         &:hover {
-            background-color: #f1f5f9;
+            background-color: #eff6ff;
+            border-color: #93c5fd;
+            box-shadow: 0 2px 5px rgba(37, 99, 235, 0.15);
+
+            .thumb-zoom-badge {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .thumb-zoom-badge {
+            position: absolute;
+            bottom: 3px;
+            right: 3px;
+            background: rgba(15, 23, 42, 0.82);
+            color: #ffffff;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 1px 4px;
+            border-radius: 3px;
+            opacity: 0;
+            transform: translateY(3px);
+            transition: all 0.2s ease;
+            pointer-events: none;
+            backdrop-filter: blur(2px);
+            z-index: 2;
         }
 
         .canvas-holder {

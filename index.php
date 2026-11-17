@@ -1827,13 +1827,14 @@ function cleanupFiles($dir) {
                                         <span class="page-num">P.${p}</span>
                                         <span class="mini-angle-badge ${angle !== 0 ? 'rotated' : ''}" id="mbadge_${file.uid}_${p}">${angle}°</span>
                                     </div>
-                                    <div class="mini-thumb-wrap" onclick="rotateFilePage(${i}, ${p}, 90)" title="クリックで右に90度回転">
+                                    <div class="mini-thumb-wrap" onclick="openMergePreviewModal(${i}, ${p})" title="🔍 クリックでプレビュー拡大">
                                         <div class="canvas-holder" id="mholder_${file.uid}_${p}" style="transform: rotate(${angle}deg);">
                                             ${['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
                                                 ? `<img src="${file.previewUrl || ''}" alt="P.${p}">`
                                                 : `<canvas id="mcanvas_${file.uid}_${p}"></canvas>`
                                             }
                                         </div>
+                                        <div class="thumb-zoom-badge">🔍 拡大</div>
                                     </div>
                                     <div class="card-actions">
                                         <button type="button" class="mini-rot-btn" onclick="rotateFilePage(${i}, ${p}, -90)" title="左90°回転">↺</button>
@@ -2725,17 +2726,114 @@ function cleanupFiles($dir) {
         // ==========================================
         // プレビュー拡大モーダル
         // ==========================================
+        let currentModalMode = 'split'; // 'split' | 'rotate' | 'merge'
         let currentModalPage = 1;
+        let currentModalContext = null; // { fileIndex: number } など
 
-        async function openPreviewModal(pageNo) {
+        function getModalTargetInfo() {
+            if (currentModalMode === 'split') {
+                if (!splitFile) return null;
+                const ext = getFileExtension(splitFile.name);
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+                const isText = (ext === 'txt');
+                const angle = splitRotations[currentModalPage] || 0;
+                return {
+                    file: splitFile,
+                    fileName: splitFile.name,
+                    pdfDoc: splitPdfDoc,
+                    pageCount: splitPageCount,
+                    isImage,
+                    isText,
+                    angle,
+                    rotate: (delta) => rotateSplitPage(currentModalPage, delta),
+                };
+            } else if (currentModalMode === 'rotate') {
+                if (!rotateFile) return null;
+                const ext = getFileExtension(rotateFile.name);
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+                const isText = false;
+                const angle = pageRotations[currentModalPage] || 0;
+                return {
+                    file: rotateFile,
+                    fileName: rotateFile.name,
+                    pdfDoc: rotatePdfDoc,
+                    pageCount: rotatePageCount,
+                    isImage,
+                    isText,
+                    angle,
+                    rotate: (delta) => rotatePage(currentModalPage, delta),
+                };
+            } else if (currentModalMode === 'merge') {
+                const fileIndex = currentModalContext ? currentModalContext.fileIndex : 0;
+                const file = mergeFiles[fileIndex];
+                if (!file) return null;
+                const ext = getFileExtension(file.name);
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+                const isText = (ext === 'txt');
+                const angle = (file.rotations && file.rotations[currentModalPage]) || 0;
+                return {
+                    file: file,
+                    fileName: file.name,
+                    pdfDoc: file.pdfDoc,
+                    pageCount: file.pageCount || 1,
+                    isImage,
+                    isText,
+                    angle,
+                    rotate: (delta) => rotateFilePage(fileIndex, currentModalPage, delta),
+                };
+            }
+            return null;
+        }
+
+        async function openSplitPreviewModal(pageNo) {
             if (!splitFile || pageNo < 1 || pageNo > splitPageCount) return;
+            currentModalMode = 'split';
+            currentModalContext = null;
             currentModalPage = pageNo;
+            await showModal();
+        }
 
+        // 後方互換用
+        function openPreviewModal(pageNo) {
+            openSplitPreviewModal(pageNo);
+        }
+
+        async function openRotatePreviewModal(pageNo) {
+            if (!rotateFile || pageNo < 1 || pageNo > rotatePageCount) return;
+            currentModalMode = 'rotate';
+            currentModalContext = null;
+            currentModalPage = pageNo;
+            await showModal();
+        }
+
+        async function openMergePreviewModal(fileIndex, pageNo) {
+            const file = mergeFiles[fileIndex];
+            if (!file) return;
+            const pageCount = file.pageCount || 1;
+            if (pageNo < 1 || pageNo > pageCount) return;
+
+            // PDFで pdfDoc が未生成の場合はロード
+            const ext = getFileExtension(file.name);
+            if (ext === 'pdf' && !file.pdfDoc && window.pdfjsLib) {
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    file.pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                } catch (e) {
+                    console.error('Failed to load pdfDoc for merge modal:', e);
+                }
+            }
+
+            currentModalMode = 'merge';
+            currentModalContext = { fileIndex };
+            currentModalPage = pageNo;
+            await showModal();
+        }
+
+        async function showModal() {
             const modal = document.getElementById('previewModal');
             if (!modal) return;
             modal.style.display = 'flex';
             document.body.style.overflow = 'hidden';
-
             await renderPreviewModalContent();
         }
 
@@ -2751,16 +2849,22 @@ function cleanupFiles($dir) {
         }
 
         async function navigatePreviewModal(delta) {
+            const info = getModalTargetInfo();
+            if (!info) return;
             const next = currentModalPage + delta;
-            if (next >= 1 && next <= splitPageCount) {
+            if (next >= 1 && next <= info.pageCount) {
                 currentModalPage = next;
                 await renderPreviewModalContent();
             }
         }
 
         function rotatePreviewModal(delta) {
-            rotateSplitPage(currentModalPage, delta);
-            const angle = splitRotations[currentModalPage] || 0;
+            const info = getModalTargetInfo();
+            if (!info || info.isText) return;
+            info.rotate(delta);
+
+            const updatedInfo = getModalTargetInfo();
+            const angle = updatedInfo ? updatedInfo.angle : 0;
             const badge = document.getElementById('previewModalBadge');
             const wrap = document.getElementById('modalContentWrap');
             if (badge) {
@@ -2774,7 +2878,7 @@ function cleanupFiles($dir) {
         }
 
         async function renderPreviewModalContent() {
-            const pageNo = currentModalPage;
+            const info = getModalTargetInfo();
             const titleEl = document.getElementById('previewModalTitle');
             const badgeEl = document.getElementById('previewModalBadge');
             const indicatorEl = document.getElementById('previewModalPageIndicator');
@@ -2782,16 +2886,15 @@ function cleanupFiles($dir) {
             const nextBtn = document.getElementById('modalNextBtn');
             const container = document.getElementById('previewModalContent');
 
-            if (!container) return;
+            if (!container || !info) return;
 
-            const angle = splitRotations[pageNo] || 0;
-            const ext = splitFile ? getFileExtension(splitFile.name) : 'pdf';
-            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
-            const isText = (ext === 'txt');
+            const pageNo = currentModalPage;
+            const pageCount = info.pageCount;
+            const angle = info.angle;
 
-            if (titleEl) titleEl.textContent = `ページ ${pageNo} / ${splitPageCount}（${splitFile.name}）`;
+            if (titleEl) titleEl.textContent = `ページ ${pageNo} / ${pageCount}（${info.fileName}）`;
             if (badgeEl) {
-                if (isText) {
+                if (info.isText) {
                     badgeEl.style.display = 'none';
                 } else {
                     badgeEl.style.display = 'inline-block';
@@ -2800,18 +2903,26 @@ function cleanupFiles($dir) {
                     else badgeEl.classList.remove('rotated');
                 }
             }
-            if (indicatorEl) indicatorEl.textContent = `${pageNo} / ${splitPageCount}`;
+
+            // 回転ボタンの表示制御（テキスト時は非表示）
+            const modalToolBtns = document.querySelectorAll('.preview-modal-header .modal-tool-btn');
+            modalToolBtns.forEach(btn => {
+                btn.style.display = info.isText ? 'none' : 'inline-flex';
+            });
+
+            if (indicatorEl) indicatorEl.textContent = `${pageNo} / ${pageCount}`;
             if (prevBtn) prevBtn.disabled = (pageNo <= 1);
-            if (nextBtn) nextBtn.disabled = (pageNo >= splitPageCount);
+            if (nextBtn) nextBtn.disabled = (pageNo >= pageCount);
 
             container.innerHTML = '<div style="color: #64748b; font-size: 14px; padding: 40px;">読み込み中...</div>';
 
-            if (isText) {
+            if (info.isText) {
+                const textContent = info.file.textContent || '';
                 container.innerHTML = `
-                    <div class="modal-text-box">${escapeHtml(splitFile.textContent || '')}</div>
+                    <div class="modal-text-box">${escapeHtml(textContent)}</div>
                 `;
-            } else if (isImage) {
-                const imgUrl = URL.createObjectURL(splitFile);
+            } else if (info.isImage) {
+                const imgUrl = info.file.previewUrl || URL.createObjectURL(info.file);
                 container.innerHTML = `
                     <div id="modalContentWrap" style="transform: rotate(${angle}deg); transition: transform 0.2s ease;">
                         <img src="${imgUrl}" alt="ページ ${pageNo}">
@@ -2826,9 +2937,9 @@ function cleanupFiles($dir) {
                 `;
                 container.querySelector('#modalContentWrap').appendChild(canvas);
 
-                if (splitPdfDoc) {
+                if (info.pdfDoc) {
                     try {
-                        const page = await splitPdfDoc.getPage(pageNo);
+                        const page = await info.pdfDoc.getPage(pageNo);
                         const baseViewport = page.getViewport({ scale: 1.0 });
                         const targetWidth = Math.min(800, window.innerWidth - 80);
                         const scale = Math.max(1.5, targetWidth / baseViewport.width);
@@ -2841,6 +2952,8 @@ function cleanupFiles($dir) {
                         console.error('Modal render error:', e);
                         container.innerHTML = '<div style="color: #ef4444; padding: 40px;">プレビューの描画に失敗しました</div>';
                     }
+                } else {
+                    container.innerHTML = '<div style="color: #64748b; padding: 40px;">PDFの読み込み中または解析に失敗しました</div>';
                 }
             }
         }
@@ -3030,13 +3143,14 @@ function cleanupFiles($dir) {
                         <span class="page-num">P.${pageNo}</span>
                         <span class="angle-badge" id="angleBadge_${pageNo}">0°</span>
                     </div>
-                    <div class="thumb-container" onclick="rotatePage(${pageNo}, 90)" title="クリックで時計回りに90度回転">
+                    <div class="thumb-container" onclick="openRotatePreviewModal(${pageNo})" title="🔍 クリックでプレビュー拡大">
                         <div class="canvas-wrap" id="canvasWrap_${pageNo}">
                             ${isImage
                                 ? `<img src="${imgUrl}" alt="P.${pageNo}" style="max-width: 130px; max-height: 170px; object-fit: contain;">`
                                 : `<canvas id="thumbCanvas_${pageNo}"></canvas>`
                             }
                         </div>
+                        <div class="thumb-zoom-badge">🔍 拡大</div>
                     </div>
                     <div class="card-actions">
                         <button type="button" class="card-btn" onclick="rotatePage(${pageNo}, -90)" title="左90°回転">↺ 90°</button>

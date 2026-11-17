@@ -2017,59 +2017,160 @@ function cleanupFiles($dir) {
             }
         }
 
+        let isInternalFileSorting = false;
+
         function initSortable() {
             const fileList = document.getElementById('fileList');
+            if (!fileList) return;
+
             let draggedItem = null;
+            let dragSourceIndex = -1;
 
             const items = fileList.querySelectorAll('.file-item');
+
+            function clearAllDropIndicators() {
+                items.forEach(el => {
+                    el.classList.remove('drag-over-top', 'drag-over-bottom', 'drag-over');
+                });
+            }
+
             items.forEach(item => {
                 item.draggable = true;
 
                 item.addEventListener('dragstart', function(e) {
-                    // 入力欄やボタンのドラッグは防止
-                    if (e.target.closest('input') || e.target.closest('button') || e.target.closest('.file-order-group')) {
+                    // 入力欄やボタン、回転アコーディオン内のドラッグは除外
+                    if (e.target.closest('input') || e.target.closest('button') || e.target.closest('.file-order-group') || e.target.closest('.file-item-pages')) {
                         e.preventDefault();
                         return;
                     }
                     draggedItem = this;
-                    setTimeout(() => this.classList.add('dragging'), 0);
+                    dragSourceIndex = parseInt(this.dataset.index, 10);
+                    isInternalFileSorting = true;
+
+                    if (e.dataTransfer) {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', String(dragSourceIndex));
+                    }
+
+                    setTimeout(() => {
+                        if (draggedItem) draggedItem.classList.add('dragging');
+                    }, 0);
                 });
 
                 item.addEventListener('dragend', function() {
+                    if (draggedItem) {
+                        draggedItem.classList.remove('dragging');
+                    }
                     draggedItem = null;
-                    this.classList.remove('dragging');
+                    dragSourceIndex = -1;
+                    isInternalFileSorting = false;
+                    clearAllDropIndicators();
                 });
 
                 item.addEventListener('dragover', function(e) {
+                    if (!draggedItem) return;
                     e.preventDefault();
-                });
+                    e.stopPropagation();
+                    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 
-                item.addEventListener('dragenter', function(e) {
-                    e.preventDefault();
-                    if (this !== draggedItem) {
-                        this.classList.add('drag-over');
+                    if (this === draggedItem) {
+                        clearAllDropIndicators();
+                        return;
+                    }
+
+                    // 要素の上半分か下半分かで挿入位置（前/後）を動的に判定
+                    const rect = this.getBoundingClientRect();
+                    const midY = rect.top + rect.height / 2;
+                    const isTop = e.clientY < midY;
+
+                    clearAllDropIndicators();
+                    if (isTop) {
+                        this.classList.add('drag-over-top');
+                    } else {
+                        this.classList.add('drag-over-bottom');
                     }
                 });
 
-                item.addEventListener('dragleave', function() {
-                    this.classList.remove('drag-over');
+                item.addEventListener('dragleave', function(e) {
+                    if (e.relatedTarget && this.contains(e.relatedTarget)) {
+                        return;
+                    }
+                    this.classList.remove('drag-over-top', 'drag-over-bottom', 'drag-over');
                 });
 
                 item.addEventListener('drop', function(e) {
+                    if (!draggedItem) return;
                     e.preventDefault();
-                    if (this !== draggedItem) {
-                        const draggedIndex = parseInt(draggedItem.dataset.index, 10);
-                        const targetIndex = parseInt(this.dataset.index, 10);
+                    e.stopPropagation();
 
-                        const temp = mergeFiles[draggedIndex];
-                        mergeFiles[draggedIndex] = mergeFiles[targetIndex];
-                        mergeFiles[targetIndex] = temp;
+                    const fromIdx = dragSourceIndex;
+                    const targetIdx = parseInt(this.dataset.index, 10);
 
-                        updateFileList();
-                        updateMergeSummary();
+                    if (fromIdx !== -1 && !isNaN(targetIdx) && fromIdx !== targetIdx) {
+                        const rect = this.getBoundingClientRect();
+                        const midY = rect.top + rect.height / 2;
+                        const isTop = e.clientY < midY;
+
+                        let insertIdx = isTop ? targetIdx : targetIdx + 1;
+                        if (fromIdx < insertIdx) {
+                            insertIdx--;
+                        }
+
+                        if (fromIdx !== insertIdx) {
+                            clearServerResult();
+                            const [movedItem] = mergeFiles.splice(fromIdx, 1);
+                            mergeFiles.splice(insertIdx, 0, movedItem);
+
+                            updateFileList();
+                            updateMergeSummary();
+
+                            const newElem = fileList.querySelector(`.file-item[data-index="${insertIdx}"]`);
+                            if (newElem) {
+                                newElem.classList.add('item-moved-highlight');
+                                setTimeout(() => newElem.classList.remove('item-moved-highlight'), 600);
+                            }
+                        }
                     }
-                    this.classList.remove('drag-over');
+
+                    clearAllDropIndicators();
                 });
+            });
+
+            // fileList 全体へのドラッグ＆ドロップ対応（余白やリスト端へのドロップ）
+            fileList.addEventListener('dragover', function(e) {
+                if (!draggedItem) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+            });
+
+            fileList.addEventListener('drop', function(e) {
+                if (!draggedItem) return;
+                e.preventDefault();
+                e.stopPropagation();
+
+                const fromIdx = dragSourceIndex;
+                if (fromIdx === -1) return;
+
+                const rect = fileList.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                const insertIdx = (e.clientY < midY) ? 0 : mergeFiles.length - 1;
+
+                if (fromIdx !== insertIdx) {
+                    clearServerResult();
+                    const [movedItem] = mergeFiles.splice(fromIdx, 1);
+                    mergeFiles.splice(insertIdx, 0, movedItem);
+
+                    updateFileList();
+                    updateMergeSummary();
+
+                    const newElem = fileList.querySelector(`.file-item[data-index="${insertIdx}"]`);
+                    if (newElem) {
+                        newElem.classList.add('item-moved-highlight');
+                        setTimeout(() => newElem.classList.remove('item-moved-highlight'), 600);
+                    }
+                }
+                clearAllDropIndicators();
             });
         }
 
@@ -3280,23 +3381,27 @@ function cleanupFiles($dir) {
             if (dropZone) {
                 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
                     dropZone.addEventListener(eventName, function(e) {
+                        if (isInternalFileSorting) return;
                         e.preventDefault();
                         e.stopPropagation();
                     }, false);
                 });
                 ['dragenter', 'dragover'].forEach(eventName => {
                     dropZone.addEventListener(eventName, function() {
+                        if (isInternalFileSorting) return;
                         dropZone.classList.add('drag-over');
                     }, false);
                 });
                 ['dragleave', 'drop'].forEach(eventName => {
                     dropZone.addEventListener(eventName, function() {
+                        if (isInternalFileSorting) return;
                         dropZone.classList.remove('drag-over');
                     }, false);
                 });
                 dropZone.addEventListener('drop', function(e) {
+                    if (isInternalFileSorting) return;
                     const dt = e.dataTransfer;
-                    if (dt && dt.files) addFiles(dt.files);
+                    if (dt && dt.files && dt.files.length > 0) addFiles(dt.files);
                 }, false);
                 dropZone.addEventListener('click', function(e) {
                     if (e.target.closest('.file-item') || e.target.closest('.remove')) return;
